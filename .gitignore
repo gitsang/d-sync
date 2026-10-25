@@ -22,6 +22,7 @@ dist/
 logs/
 data/
 *.db
+Photos/
 
 # 本地配置
 .env

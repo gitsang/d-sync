@@ -1,16 +1,16 @@
-"""SD 卡 YAML 配置的解析与校验。
+"""Parsing and validation of the SD card YAML config.
 
-配置文件默认位于 SD 卡根目录，文件名默认为 ``dsync.yml``
-（可用 ``--config-name`` 覆盖）。
+The config file lives in the SD card root; its default name is ``dsync.yml``
+(overridable with ``--config-name``).
 
-支持以下几种写法，从简到繁：
+Three notations are supported, from simple to verbose:
 
-1) 最简形式::
+1) Simplified form::
 
        source: DCIM
        destination: D:/Photos/DCIM
 
-2) 规则列表（推荐）::
+2) Rule list (recommended)::
 
        version: 1
        destination_root: D:/SD_Backup
@@ -20,14 +20,15 @@
          - source: Documents/*.pdf
            destination: Docs
 
-3) 映射表形式::
+3) Mapping table::
 
        destination_root: D:/SD_Backup
        mappings:
          DCIM: Photos/DCIM
          Documents: Docs
 
-无论哪种写法，最终都会被归一化成 :class:`SyncConfig` -> ``rules`` 列表。
+Whatever the notation, the result is normalized into a :class:`SyncConfig`
+with a ``rules`` list.
 """
 
 from __future__ import annotations
@@ -43,20 +44,20 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_NAMES = ("dsync.yml", "dsync.yaml")
-"""在 SD 卡根目录查找配置文件的候选文件名（首选 dsync.yml）。"""
+"""Candidate config file names looked up in the SD card root (dsync.yml first)."""
 
 
 class ConfigError(Exception):
-    """配置文件缺失或格式非法。"""
+    """The config file is missing or malformed."""
 
 
 def match_pattern(relative_path: str, pattern: str) -> bool:
-    """判断相对路径是否命中排除模式。
+    """Return whether a relative path matches an exclude pattern.
 
-    同时支持三种匹配方式：
-      * 直接 glob 匹配整个相对路径，如 ``a/b/c.tmp``
-      * 匹配文件名，如 ``*.tmp``
-      * 匹配任意一级目录名，如 ``System Volume Information``
+    Three matching styles are supported:
+      * glob the whole relative path, e.g. ``a/b/c.tmp``
+      * match the file name, e.g. ``*.tmp``
+      * match any directory level, e.g. ``System Volume Information``
     """
     posix = relative_path.replace("\\", "/")
     pattern = pattern.replace("\\", "/").strip()
@@ -69,7 +70,7 @@ def match_pattern(relative_path: str, pattern: str) -> bool:
         return True
     if any(fnmatch.fnmatch(part, pattern) for part in PurePosixPath(posix).parts):
         return True
-    # 支持 "**/xxx" 形式
+    # Support the "**/xxx" form
     if pattern.startswith("**/") and fnmatch.fnmatch(name, pattern[3:]):
         return True
     return False
@@ -77,24 +78,24 @@ def match_pattern(relative_path: str, pattern: str) -> bool:
 
 @dataclass
 class SyncRule:
-    """一条同步规则：把 SD 卡上的某个源映射到目标路径。"""
+    """One sync rule: maps a source on the SD card to a destination path."""
 
     source: str
-    """相对于 SD 卡根目录的源路径，可含 ``*`` / ``**`` 通配符。"""
+    """Source path relative to the SD card root; may contain ``*`` / ``**`` wildcards."""
 
     destination: str
-    """目标路径。绝对路径直接使用；相对路径基于 destination_root 解析。"""
+    """Destination path. Absolute paths are used as-is, relative ones resolve against destination_root."""
 
     enabled: bool = True
     exclude: tuple[str, ...] = ()
-    """额外的排除模式（glob），相对于源目录。"""
+    """Extra exclude patterns (glob), relative to the source directory."""
 
     overwrite: bool | None = None
-    """覆盖已有目标文件。None 表示继承全局设置。"""
+    """Overwrite existing destination files. None inherits the global setting."""
 
     # ------------------------------------------------------------------
     def matches(self, relative_path: str) -> bool:
-        """判断 SD 卡内的一个相对路径是否命中本规则的排除列表。"""
+        """Return whether a relative path inside the SD card hits this rule's exclude list."""
         for pattern in self.exclude:
             if match_pattern(relative_path, pattern):
                 return True
@@ -103,38 +104,38 @@ class SyncRule:
 
 @dataclass
 class SyncConfig:
-    """归一化后的整份配置。"""
+    """The whole config after normalization."""
 
     rules: list[SyncRule] = field(default_factory=list)
     destination_root: str = ""
-    """规则中相对目标路径的基准目录。"""
+    """Base directory for the relative destinations used by rules."""
 
     overwrite: bool = False
-    """目标已存在同名文件时是否覆盖（False 则按内容去重跳过）。"""
+    """Whether to overwrite an existing destination file (False skips by content dedupe)."""
 
     create_dirs: bool = True
-    """是否自动创建目标目录。"""
+    """Whether to create destination directories automatically."""
 
     exclude: tuple[str, ...] = ()
-    """全局排除模式，作用于所有规则。"""
+    """Global exclude patterns, applied to every rule."""
 
     max_workers: int = 4
-    """并发复制线程数。"""
+    """Number of concurrent copy threads."""
 
     enabled: bool = True
-    """自动同步总开关。为 False 时插入设备不会自动同步，只能手动触发。"""
+    """Master switch for automatic sync. When False, inserting a device does not sync; trigger it manually."""
 
     source_path: Path | None = None
-    """配置文件自身所在路径。"""
+    """Path of the config file itself."""
 
     card_root: Path | None = None
-    """配置文件所在的 SD 卡根目录。"""
+    """SD card root directory that holds the config file."""
 
     extra: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     def resolve_destination(self, rule: SyncRule) -> Path:
-        """把规则里的目标路径解析成绝对路径。"""
+        """Resolve the destination path of a rule into an absolute path."""
         dest = Path(rule.destination)
         if dest.is_absolute() or (dest.drive and dest.drive != ""):
             return dest
@@ -146,7 +147,7 @@ class SyncConfig:
         return self.exclude
 
     def active_rules(self) -> list[SyncRule]:
-        """参与同步的规则（enabled=True）。"""
+        """Rules that take part in a sync (enabled=True)."""
         return [rule for rule in self.rules if rule.enabled]
 
     def summary(self) -> dict[str, Any]:
@@ -161,7 +162,7 @@ class SyncConfig:
 
 
 # ----------------------------------------------------------------------
-# 解析
+# Parsing
 # ----------------------------------------------------------------------
 def _first(mapping: dict, keys: Iterable[str], default: Any = None) -> Any:
     for key in keys:
@@ -178,6 +179,8 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     text = str(value).strip().lower()
+    # Accept the common localized YAML booleans too, so a hand-written Chinese
+    # config still parses.
     if text in ("1", "true", "yes", "y", "on", "是", "开"):
         return True
     if text in ("0", "false", "no", "n", "off", "否", "关"):
@@ -196,7 +199,7 @@ def _as_tuple(value: Any) -> tuple[str, ...]:
 
 
 def _normalize_source(source: str) -> str:
-    """把 source 统一成相对 SD 卡根目录的 POSIX 风格路径。"""
+    """Normalize source into a POSIX-style path relative to the SD card root."""
     text = str(source).strip().replace("\\", "/")
     while text.startswith("./"):
         text = text[2:]
@@ -206,12 +209,12 @@ def _normalize_source(source: str) -> str:
 def _rule_from_mapping(item: dict, index: int, defaults: dict) -> SyncRule:
     source = _first(item, ("source", "src", "from", "input", "path"))
     if source is None:
-        raise ConfigError(f"第 {index + 1} 条规则缺少 source 字段")
+        raise ConfigError(f"Rule {index + 1} is missing the source field")
     source = str(source)
 
     destination = _first(item, ("destination", "dest", "to", "target", "output", "dst"))
     if destination is None:
-        raise ConfigError(f"规则 {index + 1}（source={source}）缺少 destination 字段")
+        raise ConfigError(f"Rule {index + 1} (source={source}) is missing the destination field")
 
     exclude = _as_tuple(_first(item, ("exclude", "ignore", "filter"), ()))
     overwrite = _first(item, ("overwrite", "force"))
@@ -226,11 +229,11 @@ def _rule_from_mapping(item: dict, index: int, defaults: dict) -> SyncRule:
 
 
 def parse_config(data: Any, source_path: Path | None = None, card_root: Path | None = None) -> SyncConfig:
-    """把已加载的 YAML 数据归一化成 :class:`SyncConfig`。"""
+    """Normalize already-loaded YAML data into a :class:`SyncConfig`."""
     if data is None:
-        raise ConfigError("配置文件内容为空")
+        raise ConfigError("Config file is empty")
     if not isinstance(data, dict):
-        raise ConfigError(f"配置文件顶层必须是映射（dict），实际为 {type(data).__name__}")
+        raise ConfigError(f"Config top level must be a mapping (dict), got {type(data).__name__}")
 
     defaults = data.get("defaults") if isinstance(data.get("defaults"), dict) else {}
 
@@ -256,8 +259,9 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
     create_dirs = _as_bool(_first(data, ("create_dirs", "mkdirs", "create_directories"), True), True)
     max_workers = int(_first(data, ("max_workers", "workers", "concurrency"), 4) or 4)
 
-    # 自动同步总开关：enable / auto_sync
-    # 注意：规则级的 enabled 含义不同（单条规则是否参与），这里不共用该键名。
+    # Master auto-sync switch: enable / auto_sync
+    # Note: the rule-level "enabled" key means something else (whether one rule
+    # participates), so that key name is deliberately not shared here.
     enabled = _as_bool(
         _first(data, ("enable", "auto_sync"), None)
         if _first(data, ("enable", "auto_sync"), None) is not None
@@ -267,12 +271,12 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
 
     rules: list[SyncRule] = []
 
-    # --- 形式 1：单条规则（顶层直接有 source/destination） ---
+    # --- Form 1: a single rule (source/destination at the top level) ---
     if _first(data, ("source", "src", "from")) is not None:
         merged = dict(data)
         rules.append(_rule_from_mapping(merged, 0, defaults))
 
-    # --- 形式 2：rules / sync / items / tasks 列表 ---
+    # --- Form 2: a rules / sync / items / tasks list ---
     else:
         list_node = None
         for key in ("rules", "mappings", "sync", "items", "tasks", "jobs", "copies"):
@@ -287,10 +291,10 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
         if isinstance(list_node, list):
             for index, item in enumerate(list_node):
                 if not isinstance(item, dict):
-                    raise ConfigError(f"第 {index + 1} 条规则必须是映射（dict）")
+                    raise ConfigError(f"Rule {index + 1} must be a mapping (dict)")
                 rules.append(_rule_from_mapping(item, index, defaults))
         elif isinstance(list_node, dict):
-            # --- 形式 3：映射表 {source: destination} ---
+            # --- Form 3: mapping table {source: destination} ---
             for source, destination in list_node.items():
                 if isinstance(destination, dict):
                     item = dict(destination)
@@ -305,11 +309,11 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
                     )
         else:
             raise ConfigError(
-                "未找到任何同步规则。请使用 rules 列表、mappings 映射表，"
-                "或直接在顶层写 source / destination。"
+                "No sync rules found. Use a rules list, a mappings table, "
+                "or put source / destination directly at the top level."
             )
 
-    # 保留 enabled=False 的规则（供页面展示与切换），实际参与同步时再过滤
+    # Keep enabled=False rules (the dashboard shows and toggles them); filter them at sync time
 
     config = SyncConfig(
         rules=rules,
@@ -335,29 +339,29 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
 
 
 def load_config_file(path: Path, card_root: Path | None = None) -> SyncConfig:
-    """从磁盘读取并解析配置文件。"""
+    """Read and parse a config file from disk."""
     try:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        raise ConfigError(f"无法读取配置文件 {path}: {exc}") from exc
+        raise ConfigError(f"Cannot read config file {path}: {exc}") from exc
 
     try:
         import yaml
     except ImportError as exc:  # pragma: no cover
-        raise ConfigError("缺少 PyYAML 依赖，无法解析配置文件") from exc
+        raise ConfigError("PyYAML is not installed; cannot parse the config file") from exc
 
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ConfigError(f"配置文件 {path.name} YAML 格式错误: {exc}") from exc
+        raise ConfigError(f"Config file {path.name} has invalid YAML: {exc}") from exc
 
     return parse_config(data, source_path=path, card_root=card_root)
 
 
 def find_config_file(card_root: Path, config_names: Iterable[str] = DEFAULT_CONFIG_NAMES) -> Path | None:
-    """在 SD 卡根目录查找配置文件。"""
+    """Look for a config file in the SD card root."""
     for name in config_names:
         candidate = card_root / name
         if candidate.is_file():
@@ -366,29 +370,29 @@ def find_config_file(card_root: Path, config_names: Iterable[str] = DEFAULT_CONF
 
 
 def validate_destination(destination: str, card_root: Path | None = None) -> str | None:
-    """检查目标路径是否合法，返回错误描述（合法则返回 None）。"""
+    """Validate a destination path and return an error description (None when valid)."""
     if not destination.strip():
-        return "目标路径为空"
+        return "Destination path is empty"
     try:
         target = Path(destination)
     except (TypeError, ValueError):
-        return f"目标路径非法: {destination}"
+        return f"Invalid destination path: {destination}"
     if card_root is not None:
         try:
             resolved = target.resolve() if target.is_absolute() else Path(os.path.abspath(target)).resolve()
             card_resolved = card_root.resolve()
             if resolved == card_resolved or card_resolved in resolved.parents:
-                return f"目标路径不能位于 SD 卡内部: {destination}"
+                return f"Destination path cannot be inside the SD card: {destination}"
         except OSError:
             pass
     return None
 
 
 # ----------------------------------------------------------------------
-# 序列化：编辑模型 <-> YAML 文本
+# Serialization: editable model <-> YAML text
 # ----------------------------------------------------------------------
 def config_to_editable(config: SyncConfig) -> dict:
-    """把配置对象转换成前端可编辑的模型（纯数据，可 JSON 序列化）。"""
+    """Convert a config object into the frontend editable model (plain JSON-serializable data)."""
     return {
         "version": 1,
         "enable": config.enabled,
@@ -409,15 +413,16 @@ def config_to_editable(config: SyncConfig) -> dict:
 
 
 def editable_to_yaml_text(model: dict) -> str:
-    """把前端编辑模型序列化成 YAML 文本。
+    """Serialize the frontend editable model into YAML text.
 
-    只输出有意义的字段，保持文件整洁；同时附带注释说明各字段用途。
+    Only meaningful fields are written so the file stays tidy; a short comment
+    header explains how the file is managed.
     """
     import yaml
 
     lines: list[str] = [
-        "# D-Sync 同步配置",
-        "# 可在 D-Sync 看板页面直接编辑此文件，保存后自动生效。",
+        "# D-Sync sync configuration",
+        "# You can edit this file in the D-Sync dashboard; saving applies it immediately.",
         "",
     ]
 
@@ -454,7 +459,7 @@ def editable_to_yaml_text(model: dict) -> str:
         rules.append(rule)
 
     if not rules:
-        raise ConfigError("至少需要一条同步规则")
+        raise ConfigError("At least one sync rule is required")
 
     document["rules"] = rules
 
@@ -469,15 +474,15 @@ def editable_to_yaml_text(model: dict) -> str:
 
 
 def parse_yaml_text(text: str) -> SyncConfig:
-    """解析 YAML 文本为配置对象（供页面保存前的预校验使用）。"""
+    """Parse YAML text into a config object (used for pre-save validation in the dashboard)."""
     try:
         import yaml
     except ImportError as exc:  # pragma: no cover
-        raise ConfigError("缺少 PyYAML 依赖，无法解析配置") from exc
+        raise ConfigError("PyYAML is not installed; cannot parse the config") from exc
 
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ConfigError(f"YAML 格式错误: {exc}") from exc
+        raise ConfigError(f"Invalid YAML: {exc}") from exc
 
     return parse_config(data)

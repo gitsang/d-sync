@@ -1,126 +1,127 @@
-# D-Sync · 外置设备自动同步守护程序
+# D-Sync · External Device Auto-Sync Daemon
 
-后台常驻的 Windows 应用。**检测到外置设备（U 盘 / 读卡器）插入 → 读取卡根目录的 YAML 配置 → 按配置把文件复制到目标路径 → 自动跳过重复文件**，同步进度在本地看板上实时展示。
+A resident Windows app. **Detect an external device (USB stick / card reader) → read the YAML config at the card root → copy files to the destination per the config → skip duplicates automatically**, with progress shown live on a local dashboard.
+
+English | [中文](README.zh_cn.md)
 
 ---
 
-## 功能特性
+## Features
 
-| 能力 | 说明 |
+| Capability | Details |
 |---|---|
-| 自动检测 | `WM_DEVICECHANGE` 事件 + 定时轮询双保险，插拔瞬间即响应 |
-| 外置设备过滤 | 只识别 U 盘、读卡器等外置卷，固定磁盘 / 光驱 / 内存盘不计入 |
-| 配置驱动 | YAML 定义源路径、目标路径、排除规则、冲突策略 |
-| 页面配置 | 看板内直接增删改规则，保存后写回设备 YAML 并立即生效 |
-| 路径选择 | 源路径、目标路径都支持「浏览…」按钮，弹出系统原生窗口选目录 |
-| 自动同步开关 | 配置里的 `enable` 控制插卡是否自动同步，页面可一键切换 |
-| 手动触发 | 无论 `enable` 是否开启，点「立即同步」都会执行 |
-| 智能去重 | 比对内容哈希，重复文件自动跳过，不重复占用磁盘 |
-| 实时看板 | 本地 Web 页面，SSE 推送进度、逐文件日志、历史记录 |
-| 后台运行 | 系统托盘常驻，不占桌面，关掉页面不影响同步 |
-| 安全边界 | 看板仅监听 `127.0.0.1`，不对外网暴露 |
+| Auto-detection | `WM_DEVICECHANGE` events plus periodic polling as a belt-and-braces approach, so inserts and removals are handled immediately |
+| External-device filtering | Only external volumes such as USB sticks and card readers; fixed disks, optical drives and RAM disks are ignored |
+| Config-driven | YAML defines source paths, destinations, exclude patterns and conflict policy |
+| In-page editing | Add, edit and delete rules directly on the dashboard; saving writes back to the device YAML and takes effect immediately |
+| Path picking | Both the source and destination support a "Browse…" button that opens the native OS folder dialog |
+| Auto-sync toggle | The `enable` field controls whether inserting the card syncs automatically, switchable on the page |
+| Manual trigger | "Sync now" always runs, whether or not `enable` is on |
+| Smart dedup | Compares content hashes and skips duplicates, so nothing takes up disk twice |
+| Live dashboard | A local web page with SSE progress push, per-file logs and history |
+| Background operation | Lives in the system tray, takes no desktop space, and closing the page does not stop syncing |
+| Safety boundary | The dashboard binds `127.0.0.1` only and is never exposed to the internet |
 
 ---
 
-## 快速开始
+## Quick start
 
-### 1. 准备配置文件（可选）
+### 1. Prepare a config file (optional)
 
-在设备根目录放一个 `dsync.yml`：
+Put a `dsync.yml` at the device root:
 
 ```yaml
 version: 1
-enable: true               # 自动同步总开关：false 则插卡不自动同步，需手动触发
+enable: true               # master auto-sync switch: false means inserting the card does not sync; trigger it manually
 destination_root: "D:/SD_Backup"
-overwrite: false           # 目标存在同名文件但内容不同时，是否覆盖
+overwrite: false           # overwrite when the destination has a same-named file with different content
 exclude: ["*.tmp", "Thumbs.db"]
 
 rules:
-  - source: "DCIM"           # 设备上的源目录
-    destination: "Photos"    # 目标（相对 destination_root）
+  - source: "DCIM"           # source directory on the device
+    destination: "Photos"    # destination (relative to destination_root)
 
   - source: "Documents"
     destination: "Documents"
-    exclude: ["*.bak"]        # 规则级排除
+    exclude: ["*.bak"]        # rule-level exclude
 ```
 
-也可以**完全不在卡上放文件** —— 在看板页面点「创建配置文件」直接配（见下文）。
-应用**不提供本地模板、不带默认配置**，配置内容一律以设备上的 YAML 为准。
+You can also put **no file on the card at all** and configure everything from the dashboard using "Create config file" (see below). The app ships **no local templates and no default config**; the YAML on the device is always the single source of truth.
 
-### 2. 运行
+### 2. Run
 
 ```bash
-# 源码方式
+# from source
 python -m dsync
 
-# 打包后的 EXE
+# packaged EXE
 dist\D-Sync.exe
 ```
 
-启动后：
+After startup:
 
-- 系统托盘出现图标，右键可打开看板 / 退出
-- 看板地址默认 `http://127.0.0.1:8765/`
-- 日志写入 `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
+- a tray icon appears; right-click it to open the dashboard or quit
+- the dashboard is at `http://127.0.0.1:8765/` by default
+- logs go to `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
 
 ---
 
-## 看板页面结构
+## Dashboard layout
 
-页面自上而下分为五块：
+The page is split into five sections from top to bottom:
 
-### ① 设备状态
+### ① Device status
 
-**每个设备一行**，不再有全局状态区。表格四列：
+**One row per device**, with no global status area any more. Four columns:
 
-| 列 | 内容 |
+| Column | Content |
 |---|---|
-| 设备名 | 卷标（读不到时回退为盘符） |
-| 当前状态 | 已检测 / 同步中 / 已完成 / 错误 |
-| 同步进度 | `x/y (已跳过 z) 99%` |
-| 本次同步耗时 | 上一次同步的秒数 |
+| Device | The volume label (falls back to the drive letter) |
+| State | Detected / Syncing / Synced / Error |
+| Progress | `x/y (z skipped) 99%` |
+| Elapsed | How many seconds the last sync took |
 
-### ② 选择设备
+### ② Select device
 
-下拉框**只列出外置设备**（U 盘、读卡器等）。配「刷新列表」「立即同步」「取消同步」三个按钮。
+The dropdown **lists external devices only** (USB sticks, card readers, ...). It comes with "Refresh list", "Sync now" and "Cancel sync".
 
-- 「立即同步」不受 `enable` 开关限制，任何时候都能手动触发
-- 选中没有配置文件的设备时，下方配置区整体隐藏，只显示创建提示
+- "Sync now" is not subject to the `enable` flag; it always triggers a manual sync
+- Selecting a device with no config file hides the config area and shows the create prompt instead
 
-### ③ 同步配置（有配置时显示）
+### ③ Sync configuration (shown when a config exists)
 
-- **自动同步开关**放在配置卡片顶部 —— 控制插入该设备是否自动开始同步
-- 全局设置：目标根目录（支持浏览）、全局排除、覆盖策略
-- 规则列表：源路径 / 目标路径 / 排除 / 启用 / 覆盖，均支持「浏览…」选路径
-- 右侧 YAML 预览，可一键复制
-- 「校验」「保存配置」两个动作；保存后写回设备根目录并立即生效
+- The **auto-sync toggle** sits at the top of the config card and controls whether inserting this device starts a sync
+- Global settings: destination root (with browsing), global excludes, overwrite policy
+- Rule list: source / destination / exclude / enabled / overwrite, each with a "Browse…" button for picking paths
+- A YAML preview on the right, copyable in one click
+- "Validate" and "Save config"; saving writes to the device root and takes effect immediately
 
-### ④ 尚未创建配置文件（无配置时显示）
+### ④ No config file yet (shown when there is none)
 
-只给一句提示和一个「创建配置文件」按钮，点开后进入空白编辑器，从零开始写规则。
+Just one hint and a "Create config file" button, which opens a blank editor to write rules from scratch.
 
-### ⑤ 运行日志 / 历史记录
+### ⑤ Activity log / History
 
-- 运行日志：逐文件级别的复制 / 跳过记录，支持自动滚动与清空
-- 历史记录：每次同步的时间、设备、结果、复制数、跳过数、耗时
+- Activity log: per-file copy/skip records with auto-scroll and clear
+- History: the time, device, result, copied count, skipped count and elapsed time of every sync
 
 ---
 
-## 配置文件格式
+## Config file format
 
-文件名按顺序查找：`dsync.yml` → `dsync.yaml`。
-可在命令行用 `--config-name` 覆盖（可重复指定）。
+The file name is looked up in order: `dsync.yml` → `dsync.yaml`.
+Override it on the command line with `--config-name` (repeatable).
 
-支持三种写法，从简到繁：
+Three syntaxes are supported, from simplest to most explicit:
 
-**1) 最简形式**
+**1) Minimal form**
 
 ```yaml
 source: DCIM
 destination: D:/Photos/DCIM
 ```
 
-**2) 规则列表（推荐）**
+**2) Rule list (recommended)**
 
 ```yaml
 version: 1
@@ -132,7 +133,7 @@ rules:
     destination: Docs
 ```
 
-**3) 映射表形式**
+**3) Mapping form**
 
 ```yaml
 destination_root: D:/SD_Backup
@@ -141,118 +142,125 @@ mappings:
   Documents: Docs
 ```
 
-无论哪种写法，最终都会被归一化成 `rules` 列表。
+Whatever the syntax, it is normalised into a `rules` list internally.
 
-### 字段说明
+### Fields
 
-#### 顶层字段
+#### Top-level fields
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |---|---|---|---|
-| `version` | int | `1` | 配置格式版本 |
-| `enable` | bool | `true` | 自动同步总开关。`false` 时插卡不自动同步，但仍可手动触发 |
-| `destination_root` | str | `""` | 规则中相对目标路径的基准目录 |
-| `overwrite` | bool | `false` | 目标存在同名文件但内容不同时是否覆盖 |
-| `exclude` | list | `[]` | 全局排除模式（glob），对所有规则生效 |
-| `rules` | list | `[]` | 规则列表 |
-| `mappings` | dict | — | 映射表简写，等价于 `rules` |
+| `version` | int | `1` | Config format version |
+| `enable` | bool | `true` | Master auto-sync switch. With `false`, inserting the card does not sync automatically but a manual trigger still works |
+| `destination_root` | str | `""` | Base directory for relative destinations in the rules |
+| `overwrite` | bool | `false` | Whether to overwrite when the destination has a same-named file with different content |
+| `exclude` | list | `[]` | Global exclude patterns (glob), applied to every rule |
+| `rules` | list | `[]` | The rule list |
+| `mappings` | dict | — | Shorthand for `rules` |
 
-#### 规则字段
+#### Rule fields
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |---|---|---|---|
-| `source` | str | 必填 | 相对设备根目录的源路径，可含 `*` / `**` 通配符 |
-| `destination` | str | 必填 | 目标路径。绝对路径直接使用；相对路径基于 `destination_root` 解析 |
-| `exclude` | list | `[]` | 规则级排除模式（glob），相对于源目录 |
-| `enabled` | bool | `true` | 是否启用该条规则 |
-| `overwrite` | bool | 继承全局 | 覆盖策略，可单独覆盖全局设置 |
+| `source` | str | required | Source path relative to the device root; may contain `*` / `**` wildcards |
+| `destination` | str | required | Destination path. An absolute path is used as-is; a relative one resolves against `destination_root` |
+| `exclude` | list | `[]` | Rule-level exclude patterns (glob), relative to the source directory |
+| `enabled` | bool | `true` | Whether the rule is active |
+| `overwrite` | bool | inherit global | Overwrite policy, overriding the global setting for this rule |
 
 ---
 
-## 去重逻辑
+## Deduplication logic
 
-对每个待复制文件：
+For every file to copy:
 
-1. 目标不存在 → 直接复制
-2. 目标存在且**大小相同** → 计算双方 SHA-256
-   - 哈希一致 → **跳过**（判定为重复）
-   - 哈希不同 → 按 `overwrite` 策略决定是否覆盖
-3. 目标存在且大小不同 → 按 `overwrite` 策略决定是否覆盖
+1. Destination missing → copy it directly
+2. Destination present with the **same size** → compute SHA-256 on both sides
+   - hashes match → **skip** (treated as a duplicate)
+   - hashes differ → follow the `overwrite` policy
+3. Destination present with a different size → follow the `overwrite` policy
 
-跳过数会实时反映在设备状态行的「同步进度」里。
+The skipped count is reflected live in the device row's "Progress" column.
 
 ---
 
-## 命令行选项
+## Command-line options
 
 ```bash
-python -m dsync [选项]
+python -m dsync [options]
 ```
 
-| 选项 | 默认值 | 说明 |
+| Option | Default | Description |
 |---|---|---|
-| `--host` | `127.0.0.1` | 看板监听地址 |
-| `--port` | `8765` | 看板监听端口，被占用时自动向后寻找 |
-| `--config-name` | `dsync.yml` | 设备上的配置文件名，可重复指定 |
-| `--include-fixed` | 关 | 把固定磁盘也纳入候选（应对读卡器被识别为固定盘的情况） |
-| `--poll-interval` | `3.0` | 轮询间隔（秒） |
-| `--open-browser` | 关 | 启动后自动打开浏览器 |
-| `--no-tray` | 关 | 不显示系统托盘图标 |
-| `--log-level` | `INFO` | 日志级别 |
+| `--host` | `127.0.0.1` | Dashboard bind address |
+| `--port` | `8765` | Dashboard port; moves to the next free port when taken |
+| `--config-name` | `dsync.yml` | Config file name on the device; may be repeated |
+| `--include-fixed` | off | Also consider fixed disks (for card readers the OS reports as fixed) |
+| `--poll-interval` | `3.0` | Polling interval in seconds |
+| `--open-browser` | off | Open the browser automatically on startup |
+| `--no-tray` | off | Do not show the system tray icon |
+| `--log-level` | `INFO` | Log level |
 
 ---
 
-## 项目结构
+## Project layout
 
 ```
 D-Sync/
 ├── dsync/
 │   ├── __init__.py
-│   ├── __main__.py          # python -m dsync 入口
-│   ├── app.py               # 应用主控：状态、设备、配置、同步编排
-│   ├── cli.py               # 命令行解析
-│   ├── config.py            # YAML 解析、校验、编辑模型互转
-│   ├── devices.py           # Win32 设备事件 + 轮询检测
-│   ├── events.py            # 事件总线（SSE 数据源）
-│   ├── filedialog.py        # 原生路径选择窗口
-│   ├── logging_setup.py     # 日志与数据目录
-│   ├── syncer.py            # 同步引擎：规则展开、排除、复制、去重
-│   ├── tray.py              # 系统托盘
+│   ├── __main__.py          # python -m dsync entry point
+│   ├── app.py               # app controller: state, devices, config, sync orchestration
+│   ├── cli.py               # command-line parsing
+│   ├── config.py            # YAML parsing, validation, edit-model conversion
+│   ├── devices.py           # Win32 device events + polling detection
+│   ├── events.py            # event bus (the SSE data source)
+│   ├── filedialog.py        # native path picker
+│   ├── logging_setup.py     # logging and data directory
+│   ├── syncer.py            # sync engine: rule expansion, excludes, copying, dedup
+│   ├── tray.py              # system tray
 │   └── web/
 │       ├── server.py        # REST API + SSE
-│       └── static/          # 看板前端（原生 HTML/CSS/JS）
-├── scripts/                 # 打包与验证脚本
-├── tests/                   # pytest 用例
-├── assets/                  # 图标
-├── run_dsync.py             # PyInstaller 打包入口
-└── dist/D-Sync.exe          # 打包产物
+│       └── static/          # dashboard front end (plain HTML/CSS/JS, i18n.js for strings)
+├── scripts/                 # packaging and verification scripts
+├── tests/                   # pytest suites
+├── assets/                  # icons
+├── run_dsync.py             # PyInstaller entry point
+└── dist/D-Sync.exe          # packaged artifact
 ```
 
 ---
 
-## 数据与日志位置
+## Data and log locations
 
-| 内容 | 路径 |
+| Content | Path |
 |---|---|
-| 日志 | `%LOCALAPPDATA%\D-Sync\logs\dsync.log`（滚动保存 5 份） |
-| 看板端口 | `http://127.0.0.1:8765/` |
+| Logs | `%LOCALAPPDATA%\D-Sync\logs\dsync.log` (keeps 5 rotating files) |
+| Dashboard port | `http://127.0.0.1:8765/` |
 
-> 测试运行时会通过 `SDSYNC_DATA_DIR` 环境变量把数据目录重定向到临时目录，
-> 不会污染 `%LOCALAPPDATA%\D-Sync`。
+> During tests the `SDSYNC_DATA_DIR` environment variable redirects the data directory
+> to a temp path, so `%LOCALAPPDATA%\D-Sync` is never touched.
 
 ---
 
-## 常见问题
+## Language
 
-**插卡后没有反应？**
-1. 确认配置文件名正确 —— 默认在设备根目录查找 `dsync.yml` / `dsync.yaml`
-2. 确认该卷被识别为**外置设备**（U 盘 / 读卡器）。部分读卡器会把卡挂成固定磁盘，
-   此时用 `--include-fixed` 启动
-3. 看看板「运行日志」或 `%LOCALAPPDATA%\D-Sync\logs\dsync.log` 里的提示
+The dashboard is bilingual: English by default, Simplified Chinese available from the
+language selector in the top bar. The choice is stored in `localStorage` under `dsync.lang`.
+All UI strings live in `dsync/web/static/i18n.js`.
 
-**提示「目标路径不能位于设备内部」？**
-这是为了避免递归复制（把文件复制回自己所在的卡）。把 `destination_root`
-指到设备外部的磁盘即可。
+---
 
-**`enable: false` 之后点「立即同步」还能用吗？**
-可以。`enable` 只控制**插卡自动同步**，手动点「立即同步」始终会执行。
+## FAQ
+
+**Nothing happens when I insert a card?**
+1. Check the config file name — by default `dsync.yml` / `dsync.yaml` is looked up at the device root
+2. Check that the volume is recognised as an **external device** (USB stick / card reader). Some card readers mount the card as a fixed disk; in that case start with `--include-fixed`
+3. Look at the dashboard's "Activity log" or the messages in `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
+
+**It says "the destination cannot be inside the device"?**
+That guard prevents recursive copying (copying files back onto the card they came from).
+Point `destination_root` at a disk outside the device.
+
+**Does "Sync now" still work after `enable: false`?**
+Yes. `enable` only controls **auto-sync on insert**; pressing "Sync now" always runs.

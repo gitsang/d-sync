@@ -1,11 +1,13 @@
-"""同步引擎：按规则把 SD 卡文件复制到目标路径，自动跳过重复文件。
+"""Sync engine: copy files from the SD card to the destination per the rules,
+skipping duplicates automatically.
 
-去重策略：
-  1. 目标不存在 -> 直接复制
-  2. 目标存在 -> 比较 (size, mtime) 与已同步记录；命中则跳过
-  3. 仍未命中 -> 抽样比对内容哈希；相同则跳过并更新记录，不同则按配置覆盖/跳过
+Deduplication strategy:
+  1. Destination missing -> copy directly
+  2. Destination present -> compare (size, mtime) against the sync record; a match is skipped
+  3. Still no match -> compare a sampled content hash; identical means skip and update
+     the record, different means overwrite or skip according to the config
 
-所有进度通过回调 (event_type, payload) 抛给上层。
+All progress is reported upwards through a callback (event_type, payload).
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ HASH_CHUNK = 1024 * 1024
 
 @dataclass
 class FileTask:
-    """一个待处理的文件。"""
+    """One file to process."""
 
     source: Path
     destination: Path
@@ -41,7 +43,7 @@ class FileTask:
 
 @dataclass
 class SyncStats:
-    """一次同步任务的统计结果。"""
+    """Statistics for one sync run."""
 
     total_files: int = 0
     copied_files: int = 0
@@ -73,9 +75,11 @@ class SyncStats:
 
 
 def quick_hash(path: Path, sample_size: int = 64 * 1024) -> str:
-    """对文件做抽样哈希：首尾各取一段，用于快速判断内容是否一致。
+    """Sample hash of a file: one chunk from the head and one from the tail, for a
+    quick "is the content the same" check.
 
-    比全量哈希快得多，适合大文件。返回 "size:head:tail" 形式。
+    Much faster than a full hash and well suited to large files. Returns
+    "size:head:tail".
     """
     try:
         size = path.stat().st_size
@@ -100,7 +104,7 @@ def quick_hash(path: Path, sample_size: int = 64 * 1024) -> str:
 
 
 def full_hash(path: Path) -> str:
-    """全量 SHA-256，用于严格比对。"""
+    """Full SHA-256, for strict comparison."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while True:
@@ -113,13 +117,15 @@ def full_hash(path: Path) -> str:
 
 def iter_source_files(card_root: Path, rule: SyncRule,
                       global_exclude: Sequence[str] = ()) -> Iterator[Path]:
-    """按规则遍历源目录下所有文件（递归），应用规则级与全局排除规则。
+    """Walk every file under the rule's source directory (recursively), applying both
+    rule-level and global excludes.
 
-    规则级 exclude 相对于源目录匹配，全局 exclude 相对于 SD 卡根目录匹配。
+    A rule-level exclude matches relative to the source directory, while a global
+    exclude matches relative to the SD card root.
     """
     source = card_root / rule.source if rule.source else card_root
     if not source.exists():
-        logger.warning("规则 %s 的源路径不存在: %s", rule.source, source)
+        logger.warning("Source path for rule %s does not exist: %s", rule.source, source)
         return
 
     def excluded(rel_to_source: str, rel_to_card: str) -> bool:
@@ -138,7 +144,7 @@ def iter_source_files(card_root: Path, rule: SyncRule,
     for dirpath, dirnames, filenames in os.walk(source):
         current = Path(dirpath)
         rel_dir = current.relative_to(source)
-        # 目录级排除
+        # directory-level exclude
         dirnames[:] = [
             d for d in dirnames
             if not excluded(str(rel_dir / d).replace("\\", "/"),
@@ -153,7 +159,7 @@ def iter_source_files(card_root: Path, rule: SyncRule,
 
 
 def match_rules(card_root: Path, config: SyncConfig) -> list[FileTask]:
-    """把配置展开成具体的文件任务列表，并做源/目标去重。"""
+    """Expand the config into concrete file tasks, deduplicating sources/destinations."""
     tasks: list[FileTask] = []
     seen: set[tuple[str, str]] = set()
 
@@ -166,7 +172,7 @@ def match_rules(card_root: Path, config: SyncConfig) -> list[FileTask]:
             try:
                 stat = file_path.stat()
             except OSError as exc:
-                logger.warning("无法读取文件信息 %s: %s", file_path, exc)
+                logger.warning("Cannot stat %s: %s", file_path, exc)
                 continue
 
             if source_is_dir:
@@ -199,7 +205,7 @@ def destination_for_overwrite(rule: SyncRule, config: SyncConfig) -> bool:
 
 
 class SyncEngine:
-    """执行一次同步任务。"""
+    """Execute one sync run."""
 
     def __init__(self, config: SyncConfig, progress: ProgressCallback | None = None) -> None:
         self.config = config
@@ -213,29 +219,29 @@ class SyncEngine:
 
     @property
     def cancelled(self) -> bool:
-        """本次任务是否被取消。"""
+        """Whether this run was cancelled."""
         return self._cancelled
 
     def _emit(self, event: str, **payload) -> None:
         try:
             self.progress(event, payload)
         except Exception:  # pragma: no cover
-            logger.exception("进度回调异常")
+            logger.exception("Progress callback failed")
 
     # ------------------------------------------------------------------
     def run(self, card_root: Path) -> SyncStats:
-        """执行同步，返回统计信息。"""
+        """Run the sync and return the statistics."""
         self.stats = SyncStats()
         self._cancelled = False
 
-        self._emit("phase", phase="planning", message="正在解析配置与扫描文件…")
+        self._emit("phase", phase="planning", message="Parsing the config and scanning files...")
 
-        # --- 校验目标路径 ---
+        # --- validate the destination paths ---
         for rule in self.config.active_rules():
             destination = self.config.resolve_destination(rule)
             error = validate_destination(str(destination), card_root)
             if error:
-                self._emit("error", message=f"规则 {rule.source} 目标路径非法：{error}")
+                self._emit("error", message=f"Invalid destination for rule {rule.source}: {error}")
                 self.stats.failed_files += 1
                 continue
 
@@ -255,12 +261,12 @@ class SyncEngine:
             self._emit("finished", stats=self.stats.to_dict(), cancelled=False)
             return self.stats
 
-        # --- 复制 ---
-        self._emit("phase", phase="copying", message=f"开始同步 {self.stats.total_files} 个文件…")
+        # --- copy ---
+        self._emit("phase", phase="copying", message=f"Starting sync of {self.stats.total_files} files...")
 
         for index, task in enumerate(tasks, start=1):
             if self._cancelled:
-                self._emit("cancelled", message="同步已取消")
+                self._emit("cancelled", message="Sync cancelled")
                 break
 
             self._emit(
@@ -276,7 +282,7 @@ class SyncEngine:
             try:
                 outcome = self._process(task)
             except Exception as exc:
-                logger.exception("复制失败 %s", task.source)
+                logger.exception("Copy failed %s", task.source)
                 self.stats.failed_files += 1
                 self._emit(
                     "file_done",
@@ -326,17 +332,17 @@ class SyncEngine:
 
     # ------------------------------------------------------------------
     def _process(self, task: FileTask) -> str:
-        """处理单个文件，返回 copied / skipped / failed。"""
+        """Process one file, returning copied / skipped / failed."""
         destination = task.destination
 
         if destination.exists() and destination.is_file():
             if self._is_duplicate(task):
-                logger.debug("跳过重复文件: %s", task.source)
+                logger.debug("Skipping duplicate file: %s", task.source)
                 return "skipped"
             overwrite = destination_for_overwrite(self._rule_of(task), self.config)
             if not overwrite:
-                # 内容不同但不允许覆盖 -> 保留目标，跳过
-                logger.info("目标已存在且内容不同（未开启覆盖），跳过: %s", destination)
+                # content differs but overwriting is not allowed -> keep the destination and skip
+                logger.info("Destination exists with different content and overwrite is off; skipping: %s", destination)
                 return "skipped"
         elif destination.exists() and destination.is_dir():
             destination = destination / task.source.name
@@ -364,22 +370,22 @@ class SyncEngine:
         return SyncRule(source="", destination="")
 
     def _is_duplicate(self, task: FileTask) -> bool:
-        """判断目标文件是否与源文件内容相同。"""
+        """Decide whether the destination file has the same content as the source."""
         destination = task.destination
         try:
             dst_stat = destination.stat()
         except OSError:
             return False
 
-        # 大小不同 -> 一定不是重复
+        # different size -> definitely not a duplicate
         if dst_stat.st_size != task.size:
             return False
 
-        # 大小相同，抽样比对
+        # same size, compare the sampled hash
         if quick_hash(task.source) == quick_hash(destination):
             return True
 
-        # 抽样不一致时对小文件做全量比对，避免误判
+        # When the samples differ, do a full comparison for small files to avoid false negatives
         if task.size <= 32 * 1024 * 1024:
             try:
                 return full_hash(task.source) == full_hash(destination)

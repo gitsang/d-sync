@@ -1,4 +1,4 @@
-"""配置编辑功能测试：读取 -> 编辑 -> 校验 -> 保存 -> 生效。"""
+"""Config-editing tests: load -> edit -> validate -> save -> take effect."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from dsync.config import (  # noqa: E402
 )
 
 
-# ---------------------------------------------------------------- 序列化
+# ---------------------------------------------------------------- serialisation
 def test_editable_roundtrip():
-    """编辑模型 -> YAML -> 解析 -> 编辑模型，字段应保持一致。"""
+    """edit model -> YAML -> parse -> edit model: the fields must survive the round trip."""
     model = {
         "version": 1,
         "destination_root": "D:/Backup",
@@ -50,9 +50,9 @@ def test_editable_roundtrip():
 
 
 def test_label_field_is_gone():
-    """label 字段已移除：模型与 YAML 都不应再出现它。"""
+    """The label field was removed and must appear in neither the model nor the YAML."""
     model = {"rules": [{"source": "DCIM", "destination": "Photos",
-                        "label": "相机照片"}]}
+                        "label": "camera photos"}]}
     text = editable_to_yaml_text(model)
     assert "label" not in text
     config = parse_yaml_text(text)
@@ -70,8 +70,8 @@ def test_editable_skips_incomplete_rules():
     model = {
         "rules": [
             {"source": "DCIM", "destination": "Photos"},
-            {"source": "", "destination": "X"},       # 缺 source -> 丢弃
-            {"source": "Y", "destination": ""},        # 缺 destination -> 丢弃
+            {"source": "", "destination": "X"},       # missing source -> dropped
+            {"source": "Y", "destination": ""},        # missing destination -> dropped
         ]
     }
     text = editable_to_yaml_text(model)
@@ -87,7 +87,7 @@ def test_yaml_text_contains_comment():
     assert "source" in text and "destination" in text
 
 
-# ---------------------------------------------------------------- 应用接口
+# ---------------------------------------------------------------- app API
 def _make_card(tmp_path: Path) -> Path:
     card = tmp_path / "CARD"
     (card / "DCIM").mkdir(parents=True)
@@ -113,7 +113,7 @@ def test_get_config_reads_existing(tmp_path):
 
 
 def test_get_config_missing_file_returns_blank_model(tmp_path):
-    """卡上没有配置文件时，返回空白模型 —— 不含任何预置规则。"""
+    """With no config file on the card, return a blank model with no preset rules."""
     card = tmp_path / "EMPTY"
     card.mkdir()
     app = SyncApplication()
@@ -140,7 +140,7 @@ def test_save_config_writes_yaml(tmp_path):
     })
     assert result["saved"] is True
 
-    # 文件确实被更新，且能被重新解析
+    # The file really was updated and can be parsed again
     text = (card / "dsync.yml").read_text(encoding="utf-8")
     assert "NewPhotos" in text
     config = load_config_file(card / "dsync.yml", card_root=card)
@@ -156,7 +156,7 @@ def test_save_config_rejects_destination_inside_card(tmp_path):
         "model": {"rules": [{"source": "DCIM", "destination": str(card / "sub")}]},
     })
     assert result["saved"] is False
-    assert "SD 卡" in result["error"]
+    assert "SD card" in result["error"]
 
 
 def test_validate_config_detects_error(tmp_path):
@@ -176,7 +176,7 @@ def test_validate_config_detects_error(tmp_path):
 
 
 def test_no_template_fallback_for_card_without_config(tmp_path):
-    """没有本地模板：卡上无配置文件时不应同步，也不应产生任何输出。"""
+    """No local templates: with no config file on the card there is no sync and no output."""
     app = SyncApplication()
     card = tmp_path / "NOCFG"
     (card / "DCIM").mkdir(parents=True)
@@ -184,9 +184,9 @@ def test_no_template_fallback_for_card_without_config(tmp_path):
     app.on_device_inserted(card)
 
     snapshot = app.snapshot()
-    assert snapshot["stats"] is None, "无配置文件时不应执行同步"
+    assert snapshot["stats"] is None, "no sync should run without a config file"
     assert not (tmp_path / "TPL_OUT").exists()
-    # 设备应被记录为「已检测」且标注无配置
+    # The device is recorded as "detected" and flagged as having no config
     devices = snapshot["devices"]
     assert len(devices) == 1
     assert devices[0]["config"] == ""
@@ -194,7 +194,7 @@ def test_no_template_fallback_for_card_without_config(tmp_path):
 
 
 def test_save_config_never_writes_template(tmp_path):
-    """保存配置只写卡上的 YAML，不会在应用数据目录留下模板文件。"""
+    """Saving writes only the YAML on the card and leaves no template file in the app data dir."""
     card = _make_card(tmp_path)
     app = SyncApplication()
     app.action_save_config({
@@ -203,11 +203,11 @@ def test_save_config_never_writes_template(tmp_path):
     })
     data_dir = Path(__import__("dsync.logging_setup", fromlist=["x"]).app_data_dir())
     leftovers = list(data_dir.glob("*.yml")) + list(data_dir.glob("*.yaml"))
-    assert leftovers == [], f"应用数据目录不应存在配置文件：{leftovers}"
+    assert leftovers == [], f"no config file should exist in the app data dir: {leftovers}"
 
 
 def test_set_enabled_on_card_without_config_is_pending(tmp_path):
-    """卡上无配置文件时，开关先记在内存里（pending），不写盘。"""
+    """With no config file on the card, the toggle is kept in memory (pending) and not written."""
     card = tmp_path / "NOSW"
     card.mkdir()
     app = SyncApplication()

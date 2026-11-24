@@ -1,6 +1,8 @@
-"""内置的本地 Web 服务：提供看板页面 + REST API + SSE 实时推送。
+"""Built-in local web service: serves the dashboard page plus a REST API and live
+SSE push.
 
-只监听 127.0.0.1，不对外暴露。使用标准库 http.server，避免额外依赖。
+Binds 127.0.0.1 only and is never exposed externally. Uses the standard-library
+http.server to avoid extra dependencies.
 """
 
 from __future__ import annotations
@@ -29,11 +31,11 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "D-Sync/1.0"
     protocol_version = "HTTP/1.1"
 
-    # 由 create_server 注入
+    # injected by create_server
     app: "WebApp" = None  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
-    def log_message(self, fmt: str, *args) -> None:  # 降噪
+    def log_message(self, fmt: str, *args) -> None:  # silence the default access log
         logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
 
     def _send(self, status: int, body: bytes, content_type: str,
@@ -87,12 +89,12 @@ class _Handler(BaseHTTPRequestHandler):
         action = parsed.path.rsplit("/", 1)[-1]
         handler = self.app.actions.get(action)
         if handler is None:
-            self._json({"error": f"未知操作: {action}"}, HTTPStatus.NOT_FOUND)
+            self._json({"error": f"Unknown action: {action}"}, HTTPStatus.NOT_FOUND)
             return
         try:
             result = handler(payload)
         except Exception as exc:
-            logger.exception("处理操作 %s 失败", action)
+            logger.exception("Failed to handle action %s", action)
             self._json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         self._json({"ok": True, "result": result})
@@ -103,7 +105,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             safe.relative_to(STATIC_DIR.resolve())
         except ValueError:
-            self._json({"error": "非法路径"}, HTTPStatus.FORBIDDEN)
+            self._json({"error": "Invalid path"}, HTTPStatus.FORBIDDEN)
             return
         if not safe.is_file():
             self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -114,7 +116,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.OK, safe.read_bytes(), content_type or "application/octet-stream")
 
     def _serve_sse(self) -> None:
-        """SSE 长连接，持续推送事件。"""
+        """SSE long-lived connection that keeps pushing events."""
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -124,7 +126,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         subscriber = self.app.bus.subscribe()
         try:
-            # 首帧：把当前状态快照推给客户端
+            # first frame: push the current state snapshot to the client
             snapshot = json.dumps(
                 {"event": "snapshot", "seq": 0, "ts": time.time(), "state": self.app.snapshot()},
                 ensure_ascii=False, default=str,
@@ -144,7 +146,7 @@ class _Handler(BaseHTTPRequestHandler):
                     self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
                     self.wfile.flush()
                 elif time.time() - last_beat > 15:
-                    # 心跳，防止代理断开
+                    # heartbeat so proxies do not drop the connection
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     last_beat = time.time()
@@ -155,7 +157,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class WebApp:
-    """看板后端：聚合状态快照与操作接口。"""
+    """Dashboard backend: aggregates state snapshots and exposes the action API."""
 
     def __init__(self, bus: EventBus, state_provider: Callable[[], dict],
                  actions: dict[str, Callable[[dict], Any]], version: str = "1.0.0") -> None:
@@ -169,7 +171,8 @@ class WebApp:
     def snapshot(self) -> dict:
         state = dict(self.state_provider())
         with self._lock:
-            # 应用层若已提供 history 则以其为准，否则用 WebApp 自己的记录
+            # If the application layer provides a history, prefer it; otherwise use
+            # the WebApp's own records
             if not state.get("history"):
                 state["history"] = list(self._history[-20:])
         return state
@@ -185,11 +188,12 @@ class WebApp:
 
 
 def _port_is_listening(host: str, port: int) -> bool:
-    """探测指定端口上是否已经有服务在监听。
+    """Probe whether something is already listening on the given port.
 
-    Windows 上 bind() 配合 SO_REUSEADDR 时，即使该端口已被别的进程监听
-    也可能绑定成功，导致「找空闲端口」误判、请求被发到旧服务上。
-    因此这里改用「主动连接探测」来判断端口是否真的空闲。
+    On Windows, bind() combined with SO_REUSEADDR can succeed even when another
+    process already listens on that port, which makes "find a free port" pick a
+    taken port and sends requests to the old service. So this probes by actively
+    connecting instead.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.3)
@@ -201,7 +205,7 @@ def _port_is_listening(host: str, port: int) -> bool:
 
 
 def find_free_port(preferred: int = 8765, host: str = "127.0.0.1") -> int:
-    """优先使用 preferred 端口，被占用则自动向后寻找。"""
+    """Prefer the requested port and fall back to scanning upwards when it is taken."""
     for offset in range(0, 50):
         candidate = preferred + offset
         if _port_is_listening(host, candidate):
@@ -213,11 +217,11 @@ def find_free_port(preferred: int = 8765, host: str = "127.0.0.1") -> int:
             except OSError:
                 continue
             return candidate
-    raise RuntimeError("找不到可用的本地端口")
+    raise RuntimeError("No free local port could be found")
 
 
 class WebServer:
-    """在后台线程中运行的 HTTP 服务。"""
+    """HTTP service that runs on a background thread."""
 
     def __init__(self, app: WebApp, host: str = "127.0.0.1", port: int = 8765) -> None:
         self.app = app
@@ -234,12 +238,12 @@ class WebServer:
         handler = type("BoundHandler", (_Handler,), {"app": self.app})
         self._server = ThreadingHTTPServer((self.host, self.port), handler)
         self._server.daemon_threads = True
-        # 端口传 0 时由系统分配，这里回填真实端口，供调用方访问
+        # Port 0 lets the OS allocate one; write the real port back for the caller
         self.port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever,
                                         name="web-server", daemon=True)
         self._thread.start()
-        logger.info("看板已启动: %s", self.url)
+        logger.info("Dashboard started: %s", self.url)
 
     def stop(self) -> None:
         if self._server:

@@ -1,4 +1,4 @@
-"""单元测试：配置解析、去重判定、规则匹配。"""
+"""Unit tests: config parsing, dedup decisions and rule matching."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from dsync.config import ConfigError, parse_config  # noqa: E402
 from dsync.syncer import SyncEngine, match_rules, quick_hash  # noqa: E402
 
 
-# ---------------------------------------------------------------- 配置解析
+# ---------------------------------------------------------------- config parsing
 def test_parse_simple_form():
     config = parse_config({"source": "DCIM", "destination": "D:/Photos/DCIM"})
     assert len(config.rules) == 1
@@ -32,7 +32,7 @@ def test_parse_rules_list():
     })
     assert len(config.rules) == 2
     assert config.destination_root == "D:/Backup"
-    # 相对目标应基于 destination_root 解析
+    # Relative destinations resolve against destination_root
     resolved = config.resolve_destination(config.rules[0])
     assert str(resolved).replace("\\", "/").lower().endswith("d:/backup/photos")
 
@@ -85,7 +85,7 @@ def test_exclude_matching():
     assert rule.matches("a/b/photo.jpg") is False
 
 
-# ---------------------------------------------------------------- 文件匹配
+# ---------------------------------------------------------------- file matching
 def _make_tree(root: Path):
     (root / "DCIM" / "100CAMERA").mkdir(parents=True)
     (root / "DCIM" / "100CAMERA" / "a.jpg").write_bytes(b"photo-a")
@@ -140,7 +140,7 @@ def test_match_rules_respects_global_exclude(tmp_path):
     assert len(tasks) == 2
 
 
-# ---------------------------------------------------------------- 去重
+# ---------------------------------------------------------------- dedup
 def test_quick_hash_equal(tmp_path):
     a = tmp_path / "a.bin"
     b = tmp_path / "b.bin"
@@ -158,7 +158,7 @@ def test_quick_hash_different(tmp_path):
 
 
 def test_sync_copies_then_skips_duplicate(tmp_path):
-    """核心场景：首次复制，第二次应全部跳过（重复）。"""
+    """Core scenario: copy on the first run, skip everything as duplicates on the second."""
     card = tmp_path / "card"
     card.mkdir()
     _make_tree(card)
@@ -175,7 +175,7 @@ def test_sync_copies_then_skips_duplicate(tmp_path):
     assert stats.skipped_files == 0
     assert (out / "Photos" / "100CAMERA" / "a.jpg").exists()
 
-    # 第二次运行：应全部跳过
+    # Second run: everything should be skipped
     engine2 = SyncEngine(config)
     stats2 = engine2.run(card)
     assert stats2.copied_files == 0
@@ -183,7 +183,7 @@ def test_sync_copies_then_skips_duplicate(tmp_path):
 
 
 def test_sync_overwrite_policy(tmp_path):
-    """内容不同且允许覆盖时，应覆盖；不允许覆盖时应跳过。"""
+    """Different content is overwritten when allowed and skipped when not."""
     card = tmp_path / "card"
     card.mkdir()
     (card / "f.txt").write_bytes(b"v1")
@@ -201,7 +201,7 @@ def test_sync_overwrite_policy(tmp_path):
     assert stats.copied_files == 1
     assert (out / "P" / "f.txt").read_bytes() == b"v1"
 
-    # overwrite=false -> 内容不同也应跳过（保留目标）
+    # overwrite=false -> different content is skipped too (keep the destination)
     config2 = parse_config({
         "destination_root": str(out),
         "overwrite": False,
@@ -237,7 +237,7 @@ def test_sync_reports_progress_events(tmp_path):
 
 
 def test_file_done_carries_log_level(tmp_path):
-    """file_done 事件需带日志等级：跳过=DEBUG，复制成功=INFO，失败=ERROR。"""
+    """file_done events must carry a log level: skip=DEBUG, copy=INFO, failure=ERROR."""
     card = tmp_path / "card"
     card.mkdir()
     _make_tree(card)
@@ -249,7 +249,7 @@ def test_file_done_carries_log_level(tmp_path):
     events = []
     engine = SyncEngine(config, progress=lambda e, p: events.append((e, p)))
     engine.run(card)
-    # 第二次运行：全部命中重复 -> skipped
+    # Second run: everything hits a duplicate -> skipped
     engine.run(card)
 
     levels = {}

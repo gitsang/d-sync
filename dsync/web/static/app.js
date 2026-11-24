@@ -1,6 +1,11 @@
-/* D-Sync 看板前端逻辑 */
+/* D-Sync dashboard front-end logic */
 (function () {
   "use strict";
+
+  /* Local alias for the i18n helper provided by i18n.js (loaded before this file). */
+  var t = function (key, params) {
+    return window.DSyncI18n ? window.DSyncI18n.t(key, params) : key;
+  };
 
   var state = {
     phase: "idle",
@@ -14,7 +19,7 @@
     syncing: false
   };
 
-  /* ---------------- 配置编辑器状态 ---------------- */
+  /* ---------------- config editor state ---------------- */
   var editor = {
     model: null,        // {version, enable, destination_root, overwrite, exclude, rules}
     loaded: false,
@@ -25,7 +30,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
-  // ------------------------------------------------------------ 工具
+  // ------------------------------------------------------------ utilities
   function fmtBytes(bytes) {
     if (!bytes) return "0 B";
     var units = ["B", "KB", "MB", "GB", "TB"];
@@ -41,7 +46,7 @@
     if (seconds < 60) return seconds.toFixed(1) + " s";
     var m = Math.floor(seconds / 60);
     var s = Math.floor(seconds % 60);
-    return m + " 分 " + String(s).padStart(2, "0") + " 秒";
+    return t("time.minutesSeconds", { m: m, s: String(s).padStart(2, "0") });
     }
 
   function fmtTime(ts) {
@@ -62,11 +67,11 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  // ------------------------------------------------------------ 日志
+  // ------------------------------------------------------------ logging
   var LOG_LEVELS = ["debug", "info", "warn", "error"];
   var logLevelEnabled = { debug: true, info: true, warn: true, error: true };
 
-  /* 旧版 level 名称 -> 新等级 */
+  /* legacy level names -> current levels */
   function normalizeLevel(level) {
     var lv = String(level || "info").toLowerCase();
     if (lv === "ok" || lv === "success") return "info";
@@ -94,7 +99,7 @@
     if ($("autoscroll").checked) { box.scrollTop = box.scrollHeight; }
   }
 
-  /* 按勾选的等级过滤日志行 */
+  /* filter log lines by the checked levels */
   function applyLogFilter() {
     var lines = $("log").children;
     for (var i = 0; i < lines.length; i++) {
@@ -116,7 +121,7 @@
     });
   }
 
-  // ============================================================ 配置编辑器
+  // ============================================================ config editor
   function emptyModel() {
     return {
       version: 1,
@@ -185,7 +190,7 @@
       var rule = rules[i];
       var tr = document.createElement("tr");
 
-      // 源路径 + 浏览按钮
+      // source path + browse button
       var tdSource = document.createElement("td");
       var srcWrap = document.createElement("span");
       srcWrap.className = "input-with-btn";
@@ -197,8 +202,8 @@
       var btnSrc = document.createElement("button");
       btnSrc.type = "button";
       btnSrc.className = "btn tiny";
-      btnSrc.textContent = "浏览…";
-      btnSrc.title = "在设备内选择源文件夹";
+      btnSrc.textContent = t("action.browse");
+      btnSrc.title = t("config.pickSourceInDevice");
       btnSrc.addEventListener("click", function () {
         pickPath("source", this.closest("tr").querySelector(".r-source").value);
       });
@@ -206,7 +211,7 @@
       srcWrap.appendChild(btnSrc);
       tdSource.appendChild(srcWrap);
 
-      // 目标路径 + 浏览按钮
+      // destination path + browse button
       var tdDest = document.createElement("td");
       var destWrap = document.createElement("span");
       destWrap.className = "input-with-btn";
@@ -218,8 +223,8 @@
       var btnDest = document.createElement("button");
       btnDest.type = "button";
       btnDest.className = "btn tiny";
-      btnDest.textContent = "浏览…";
-      btnDest.title = "选择目标文件夹";
+      btnDest.textContent = t("action.browse");
+      btnDest.title = t("config.pickDestination");
       btnDest.addEventListener("click", function () {
         pickPath("destination", this.closest("tr").querySelector(".r-dest").value);
       });
@@ -241,7 +246,7 @@
       chkEnabled.type = "checkbox";
       chkEnabled.className = "r-enabled";
       chkEnabled.checked = rule.enabled !== false;
-      chkEnabled.title = "启用该规则";
+      chkEnabled.title = t("config.enableRule");
       tdEnabled.appendChild(chkEnabled);
 
       var tdOverwrite = document.createElement("td");
@@ -258,7 +263,7 @@
       var btnDel = document.createElement("button");
       btnDel.type = "button";
       btnDel.className = "btn small danger";
-      btnDel.textContent = "删除";
+      btnDel.textContent = t("action.delete");
       btnDel.addEventListener("click", function () {
         readModelFromForm();
         editor.model.rules.splice(indexOfRow(this), 1);
@@ -291,21 +296,21 @@
   function markDirty() {
     editor.dirty = true;
     var tag = $("config-target-tag");
-    tag.textContent = "未保存的修改";
+    tag.textContent = t("config.unsavedTag");
     tag.className = "tag warn";
   }
 
   function markClean() {
     editor.dirty = false;
     var tag = $("config-target-tag");
-    tag.textContent = "设备配置";
+    tag.textContent = t("config.targetTag");
     tag.className = "tag accent";
   }
 
   function updateYamlPreview() {
     var model = readModelFromForm();
     if (!model.rules.length) {
-      $("yaml-preview").textContent = "# 尚未添加规则";
+      $("yaml-preview").textContent = t("config.yamlEmpty");
       return;
     }
     var lines = ["version: 1", "enable: " + (model.enable ? "true" : "false")];
@@ -327,9 +332,9 @@
     $("yaml-preview").textContent = lines.join("\n");
   }
 
-  // ------------------------------------------------------------ 路径选择
+  // ------------------------------------------------------------ path picking
   function pickPath(kind, current) {
-    setConfigHint("正在打开选择窗口…", "");
+    setConfigHint(t("picker.opening"), "");
     post("pick_path", {
       kind: kind,
       card_path: editor.cardPath || state.selectedCard || "",
@@ -343,10 +348,10 @@
         return;
       }
       if (data.cancelled) {
-        setConfigHint("已取消选择", "");
+        setConfigHint(t("picker.cancelled"), "");
         return;
       }
-      // 写入对应输入框
+      // write into the matching input
       var input = null;
       if (kind === "source") {
         input = $("cfg-rules").querySelector(".r-source");
@@ -354,14 +359,14 @@
         input = $("cfg-rules").querySelector(".r-dest");
       }
       if (input) { input.value = data.path; }
-      setConfigHint("已选择：" + data.path, "ok");
+      setConfigHint(t("picker.selected", { path: data.path }), "ok");
       readModelFromForm();
       updateYamlPreview();
       markDirty();
     });
   }
 
-  // ------------------------------------------------------------ 设备列表
+  // ------------------------------------------------------------ device list
   function renderDevices() {
     var body = $("devices");
     body.innerHTML = "";
@@ -370,7 +375,7 @@
 
     if (!devices.length) {
       var empty = document.createElement("tr");
-      empty.innerHTML = '<td colspan="4" class="muted">未检测到设备</td>';
+      empty.innerHTML = '<td colspan="4" class="muted">' + escapeHtml(t('devices.empty')) + '</td>';
       body.appendChild(empty);
       return;
     }
@@ -379,9 +384,10 @@
       var tr = document.createElement("tr");
       var cls = dev.state === "synced" ? "ok" : dev.state === "syncing" ? "accent"
         : dev.state === "error" ? "err" : "";
-      var label = { detected: "已检测", syncing: "同步中", synced: "已同步", error: "错误" }[dev.state] || dev.state;
+      var label = t("state." + dev.state, null);
+      if (label === "state." + dev.state) label = dev.state;
 
-      // 设备名：只显示路径一行
+      // device name: show only the path line
       var tdName = document.createElement("td");
       var nameBox = document.createElement("div");
       nameBox.className = "dev-name";
@@ -389,14 +395,14 @@
       nameBox.title = dev.name && dev.name !== dev.path ? dev.name : "";
       tdName.appendChild(nameBox);
 
-      // 当前状态：只保留一个状态胶囊
+      // current state: keep a single status pill
       var tdState = document.createElement("td");
       var tag = document.createElement("span");
       tag.className = "tag " + cls;
       tag.textContent = label;
       tdState.appendChild(tag);
 
-      // 同步进度 x/y(已跳过 z) 99%
+      // progress x/y (z skipped) 99%
       var tdProgress = document.createElement("td");
       var total = dev.total_files || 0;
       var done = dev.done_files || 0;
@@ -405,7 +411,7 @@
       if (dev.state === "synced" && total > 0) pct = 100;
       var progressText = document.createElement("span");
       progressText.className = "progress-text";
-      progressText.textContent = done + "/" + total + " (已跳过 " + skipped + ") " + pct + "%";
+      progressText.textContent = t("log.progress", { done: done, total: total, skipped: skipped, pct: pct });
       tdProgress.appendChild(progressText);
       var bar = document.createElement("div");
       bar.className = "bar mini";
@@ -416,7 +422,7 @@
       bar.appendChild(fill);
       tdProgress.appendChild(bar);
 
-      // 本次同步耗时：同步中按「当前时间 - 开始时间」实时计算
+      // elapsed: while syncing, computed live as "now - start time"
       var tdElapsed = document.createElement("td");
       tdElapsed.className = "num";
       tdElapsed.setAttribute("data-elapsed-path", dev.path || "");
@@ -430,7 +436,7 @@
     });
   }
 
-  /* 计算某设备本次同步的耗时文本：同步中用当前时间减开始时间 */
+  /* Elapsed text for a device: while syncing, now minus the start time */
   function elapsedText(dev) {
     var started = dev.started_at || 0;
     if (dev.state === "syncing" && started > 0) {
@@ -440,7 +446,7 @@
     return "—";
   }
 
-  /* 每秒刷新一次耗时列，让同步中的计时实时走动 */
+  /* Refresh the elapsed column every second so a running timer ticks */
   function refreshElapsed() {
     var devices = state.devices || [];
     var cells = $("devices").querySelectorAll("[data-elapsed-path]");
@@ -454,7 +460,7 @@
     }
   }
 
-  // ------------------------------------------------------------ 选设备流程
+  // ------------------------------------------------------------ device selection flow
   function refreshCardSelect() {
     var select = $("card-select");
     var current = select.value || state.selectedCard;
@@ -463,20 +469,20 @@
 
     var emptyOpt = document.createElement("option");
     emptyOpt.value = "";
-    emptyOpt.textContent = devices.length ? "— 请选择设备 —" : "未检测到设备";
+    emptyOpt.textContent = devices.length ? t("devices.choose") : t("devices.empty");
     select.appendChild(emptyOpt);
 
     devices.forEach(function (dev) {
       var opt = document.createElement("option");
       opt.value = dev.path;
-      var mark = dev.config ? " ✓" : "（无配置）";
+      var mark = dev.config ? t("devices.hasConfigMark") : t("devices.noConfigMark");
       opt.textContent = (dev.path || dev.name || "") + mark;
       select.appendChild(opt);
     });
 
     if (current) select.value = current;
     if (select.value !== (current || "")) {
-      // 目标不在列表里（设备已被拔出）
+      // the target is not in the list (the device was unplugged)
       select.value = "";
     }
   }
@@ -486,12 +492,12 @@
     state.selectedCard = path || "";
 
     if (!path) {
-      // 未选择：隐藏配置区，显示空状态提示
+      // nothing selected: hide the config area and show the empty state
       editor.hasConfig = false;
       editor.model = emptyModel();
       $("editor-card").hidden = true;
       $("empty-card").hidden = true;
-      $("selected-hint").textContent = "未选择";
+      $("selected-hint").textContent = t("devices.notSelected");
       $("btn-sync-now").disabled = true;
       render();
       return;
@@ -507,14 +513,14 @@
         return;
       }
       if (!data.has_config) {
-        // 没有配置文件 -> 隐藏下方内容，提示创建
+        // no config file -> hide the content below and prompt to create one
         editor.hasConfig = false;
         editor.model = emptyModel();
         $("editor-card").hidden = true;
         $("empty-card").hidden = false;
-        $("empty-title").textContent = path + " 还没有配置文件";
+        $("empty-title").textContent = t("empty.title", { path: path });
         $("empty-desc").innerHTML =
-          "创建一个 <code>dsync.yml</code>，写好源路径与目标路径后即可同步。保存后会自动写入这台设备的根目录。";
+          t("empty.desc");
         $("create-hint").textContent = "";
         if (typeof data.enable === "boolean") {
           $("auto-enable").checked = data.enable;
@@ -523,7 +529,7 @@
         return;
       }
 
-      // 有配置文件 -> 加载规则，显示配置区
+      // has a config file -> load the rules and show the config area
       editor.hasConfig = true;
       $("empty-card").hidden = true;
       $("editor-card").hidden = false;
@@ -532,11 +538,11 @@
   }
 
   function loadConfig(cardPath) {
-    setConfigHint("正在载入配置…", "");
+    setConfigHint(t("config.loading"), "");
     post("get_config", { card_path: cardPath })
       .then(function (data) {
         if (!data || data.error) {
-          setConfigHint((data && data.error) || "载入失败", "err");
+          setConfigHint((data && data.error) || t("config.loadFailed"), "err");
           if (data && !data.exists) {
             $("editor-card").hidden = true;
             $("empty-card").hidden = false;
@@ -547,7 +553,7 @@
         markClean();
         var hint = data.hint || "";
         if (!data.exists) {
-          hint = hint || "该设备尚无配置文件，保存后将创建。";
+          hint = hint || t("config.noConfigHint");
         }
         if (data.error) hint = data.error + (hint ? " " + hint : "");
         setConfigHint(hint, data.error ? "err" : (data.exists ? "" : "warn"));
@@ -563,39 +569,39 @@
   function saveConfig() {
     var model = readModelFromForm();
     if (!model.rules.length) {
-      setConfigHint("请至少添加一条规则", "err");
-      $("save-hint").textContent = "请至少添加一条规则";
+      setConfigHint(t("config.noRules"), "err");
+      $("save-hint").textContent = t("config.noRules");
       $("save-hint").className = "hint err";
       return;
     }
     if (!editor.cardPath) {
-      setConfigHint("请先选择一台设备", "err");
+      setConfigHint(t("config.pickDeviceFirst"), "err");
       return;
     }
-    $("save-hint").textContent = "保存中…";
+    $("save-hint").textContent = t("config.saving");
     $("save-hint").className = "hint";
     post("save_config", {
       model: model,
       card_path: editor.cardPath
     }).then(function (data) {
       if (!data) {
-        $("save-hint").textContent = "保存失败：服务器无响应";
+        $("save-hint").textContent = t("config.saveFailedNoServer");
         $("save-hint").className = "hint err";
         return;
       }
       if (data.error) {
-        $("save-hint").textContent = "保存失败：" + data.error;
+        $("save-hint").textContent = t("config.saveFailed", { error: data.error });
         $("save-hint").className = "hint err";
         setConfigHint(data.error, "err");
         return;
       }
-      $("save-hint").textContent = "已保存（" + data.rules + " 条规则）";
+      $("save-hint").textContent = t("config.saved", { n: data.rules });
       $("save-hint").className = "hint ok";
       markClean();
       editor.hasConfig = true;
       $("empty-card").hidden = true;
       $("editor-card").hidden = false;
-      addLog("配置已保存：" + (data.path || editor.cardPath), "ok");
+      addLog(t("log.configSaved", { path: data.path || editor.cardPath }), "ok");
       fetchState();
     });
   }
@@ -619,10 +625,10 @@
       post("validate_config", { model: model, card_path: editor.cardPath })
         .then(function (data) {
           if (data && data.valid) {
-            $("save-hint").textContent = "校验通过（" + data.rules + " 条规则）";
+            $("save-hint").textContent = t("config.validated", { n: data.rules });
             $("save-hint").className = "hint ok";
           } else {
-            $("save-hint").textContent = "校验失败：" + ((data && data.error) || "未知错误");
+            $("save-hint").textContent = t("config.validateFailed", { error: (data && data.error) || t("config.unknownError") });
             $("save-hint").className = "hint err";
           }
         });
@@ -634,16 +640,16 @@
       var text = $("yaml-preview").textContent;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function () {
-          $("save-hint").textContent = "YAML 已复制到剪贴板";
+          $("save-hint").textContent = t("config.copied");
           $("save-hint").className = "hint ok";
         });
       } else {
-        setConfigHint("当前浏览器不支持自动复制，请手动选择文本复制", "warn");
+        setConfigHint(t("config.copyUnsupported"), "warn");
       }
     });
 
     $("btn-pick-dest-root").addEventListener("click", function () {
-      setConfigHint("正在打开选择窗口…", "");
+      setConfigHint(t("picker.opening"), "");
       post("pick_path", {
         kind: "destination",
         card_path: editor.cardPath || state.selectedCard || "",
@@ -654,16 +660,16 @@
           setConfigHint(data.error, "err");
           return;
         }
-        if (data.cancelled) { setConfigHint("已取消选择", ""); return; }
+        if (data.cancelled) { setConfigHint(t("picker.cancelled"), ""); return; }
         $("cfg-dest-root").value = data.path;
-        setConfigHint("已选择：" + data.path, "ok");
+        setConfigHint(t("picker.selected", { path: data.path }), "ok");
         readModelFromForm();
         updateYamlPreview();
         markDirty();
       });
     });
 
-    // 表单任意变化 -> 标记未保存 + 刷新预览
+    // Any form change -> mark unsaved + refresh the preview
     var editorCard = $("editor-card");
     editorCard.addEventListener("input", function (event) {
       readModelFromForm();
@@ -680,38 +686,38 @@
     });
   }
 
-  // ------------------------------------------------------------ 渲染
+  // ------------------------------------------------------------ rendering
   var PHASE_TEXT = {
-    idle: "空闲等待",
-    planning: "正在扫描文件",
-    copying: "正在同步",
-    done: "已完成",
-    error: "出错",
-    cancelled: "已取消"
+    idle: t("phase.idle"),
+    planning: t("phase.planning"),
+    copying: t("phase.copying"),
+    done: t("phase.done"),
+    error: t("phase.error"),
+    cancelled: t("phase.cancelled")
   };
 
   function render() {
     var stats = state.stats || {};
 
-    // 同步按钮状态
+    // sync button state
     $("btn-cancel-sync").disabled = !state.syncing;
     if (!state.syncing) { $("btn-sync-now").disabled = !state.selectedCard; }
 
     renderDevices();
 
-    // 历史
+    // history
     var histBox = $("history");
     histBox.innerHTML = "";
     var history = (window.__history || []);
     $("history-count").textContent = history.length;
     if (!history.length) {
-      histBox.innerHTML = '<tr><td colspan="6" class="muted">暂无历史记录</td></tr>';
+      histBox.innerHTML = '<tr><td colspan="6" class="muted">' + escapeHtml(t('history.empty')) + '</td></tr>';
     }
     history.forEach(function (item) {
       var tr = document.createElement("tr");
-      var status = item.status === "ok" ? '<span class="tag ok">成功</span>'
-        : item.status === "cancelled" ? '<span class="tag warn">已取消</span>'
-        : '<span class="tag err">失败</span>';
+      var status = item.status === "ok" ? '<span class="tag ok">' + escapeHtml(t("history.ok")) + '</span>'
+        : item.status === "cancelled" ? '<span class="tag warn">' + escapeHtml(t("history.cancelled")) + '</span>'
+        : '<span class="tag err">' + escapeHtml(t("history.failed")) + '</span>';
       tr.innerHTML =
         "<td>" + escapeHtml(fmtDateTime(item.ts)) + "</td>" +
         "<td>" + escapeHtml(item.device || item.path || "") + "</td>" +
@@ -737,7 +743,7 @@
     window.__history = data.history || window.__history || [];
     if (data.message) { $("subtitle").textContent = data.message; }
 
-    // 设备列表刷新时保持当前选卡
+    // Keep the selected card when the device list refreshes
     var prevSelected = state.selectedCard;
     var backendSelected = data.selected_card || "";
     state.selectedCard = backendSelected || prevSelected;
@@ -750,7 +756,7 @@
       $("btn-sync-now").disabled = false;
     }
 
-    // 首次加载：自动选中第一台带配置的设备
+    // First load: auto-select the first device that has a config
     if (!editor.loaded) {
       editor.loaded = true;
       var devices = state.devices || [];
@@ -764,7 +770,7 @@
         selectCard(target);
       }
     } else if (hadDevices !== (state.devices || []).length && !editor.dirty) {
-      // 新设备插入 —— 若尚未选卡则自动选上
+      // A device was inserted -- auto-select it when nothing is selected yet
       if (!state.selectedCard && state.devices.length) {
         var newest = state.devices[state.devices.length - 1].path;
         $("card-select").value = newest;
@@ -778,11 +784,11 @@
     var source = new EventSource("/api/events");
 
     source.onopen = function () {
-      setConn("live", "实时连接");
+      setConn("live", t("conn.live"));
     };
 
     source.onerror = function () {
-      setConn("error", "连接中断，重试中");
+      setConn("error", t("conn.error"));
     };
 
     source.onmessage = function (event) {
@@ -801,7 +807,7 @@
         case "plan":
           state.totalFiles = msg.total_files || 0;
           state.doneFiles = 0;
-          addLog("扫描到 " + msg.total_files + " 个文件，共 " + fmtBytes(msg.total_bytes), "info");
+          addLog(t("log.scanned", { files: msg.total_files, bytes: fmtBytes(msg.total_bytes) }), "info");
           render();
           break;
         case "file_start":
@@ -813,38 +819,40 @@
           state.doneFiles = msg.index || state.doneFiles;
           state.currentFile = null;
           if (msg.status === "copied") {
-            addLog("已复制 → " + msg.destination, "info");
+            addLog(t("log.copiedTo", { dest: msg.destination }), "info");
           } else if (msg.status === "skipped") {
-            addLog("已跳过（重复）→ " + msg.destination, "debug");
+            addLog(t("log.skippedDup", { dest: msg.destination }), "debug");
           } else {
-            addLog("失败：" + (msg.message || msg.source), "error");
+            addLog(t("log.failed", { what: msg.message || msg.source }), "error");
           }
           render();
           break;
         case "error":
-          addLog(msg.message || "未知错误", "error");
+          addLog(msg.message || t("log.unknownError"), "error");
           break;
         case "cancelled":
-          addLog(msg.message || "同步已取消", "warn");
+          addLog(msg.message || t("log.syncCancelled"), "warn");
           break;
         case "finished":
           state.phase = "done";
           state.currentFile = null;
           if (msg.stats) { state.stats = msg.stats; }
-          addLog("同步完成：复制 " + (state.stats ? state.stats.copied_files : 0) +
-            " 个，跳过 " + (state.stats ? state.stats.skipped_files : 0) + " 个", "ok");
+          addLog(t("log.syncDone", {
+            copied: state.stats ? state.stats.copied_files : 0,
+            skipped: state.stats ? state.stats.skipped_files : 0
+          }), "ok");
           render();
           fetchState();
           break;
         case "device":
-          addLog(msg.message || ("设备事件：" + msg.action), "info");
+          addLog(msg.message || t("log.deviceEvent", { action: msg.action }), "info");
           fetchState();
           break;
         case "log":
           addLog(msg.message || "", msg.level || "info");
           break;
         case "config":
-          addLog(msg.message || "配置已更新", "ok");
+          addLog(msg.message || t("log.configUpdated"), "ok");
           fetchState();
           break;
         case "state":
@@ -864,10 +872,10 @@
       .then(applySnapshot).catch(function () {});
   }
 
-  // ------------------------------------------------------------ 交互
+  // ------------------------------------------------------------ interactions
   $("btn-rescan").addEventListener("click", function () {
     post("rescan", {});
-    addLog("已请求重新扫描设备", "info");
+    addLog(t("log.requestedRescan"), "info");
   });
 
   $("btn-open-folder").addEventListener("click", function () {
@@ -890,27 +898,27 @@
   $("btn-refresh-cards").addEventListener("click", function () {
     post("rescan", {});
     fetchState();
-    addLog("已刷新设备列表", "info");
+    addLog(t("log.refreshedList"), "info");
   });
 
   $("btn-sync-now").addEventListener("click", function () {
     if (!state.selectedCard) {
-      addLog("请先选择一台设备", "warn");
+      addLog(t("log.pickDeviceFirst"), "warn");
       return;
     }
     post("sync_now", { path: state.selectedCard }).then(function (data) {
       if (data && data.error) {
-        addLog("同步失败：" + data.error, "error");
+        addLog(t("log.syncFailed", { error: data.error }), "error");
         setConfigHint(data.error, "err");
       } else {
-        addLog("已手动触发同步：" + state.selectedCard, "info");
+        addLog(t("log.manualSync", { path: state.selectedCard }), "info");
       }
     });
   });
 
   $("btn-cancel-sync").addEventListener("click", function () {
     post("cancel", {});
-    addLog("已请求取消同步", "warn");
+    addLog(t("log.cancelRequested"), "warn");
   });
 
   $("auto-enable").addEventListener("change", function () {
@@ -919,27 +927,27 @@
     updateYamlPreview();
     markDirty();
     if (!state.selectedCard) {
-      addLog("请先选择一台设备", "warn");
+      addLog(t("log.pickDeviceFirst"), "warn");
       return;
     }
     post("set_enabled", { path: state.selectedCard, enable: enabled })
       .then(function (data) {
         if (data && data.error) {
-          addLog("开关设置失败：" + data.error, "error");
+          addLog(t("log.toggleFailed", { error: data.error }), "error");
           $("auto-enable").checked = !enabled;
           return;
         }
         if (data && data.pending) {
-          addLog("自动同步已" + (enabled ? "开启" : "关闭") + "（创建配置文件后生效）", "info");
+          addLog(t("log.autoSyncCreated", { state: t(enabled ? "log.enabled" : "log.disabled") }), "info");
           return;
         }
-        addLog("自动同步已" + (enabled ? "开启" : "关闭"), "ok");
+        addLog(t("log.autoSync", { state: t(enabled ? "log.enabled" : "log.disabled") }), "ok");
         fetchState();
       });
   });
 
   $("btn-create-config").addEventListener("click", function () {
-    // 进入创建模式：显示编辑器，给一条空规则
+    // Enter create mode: show the editor with one blank rule
     $("empty-card").hidden = true;
     $("editor-card").hidden = false;
     if (!editor.model || !editor.model.rules.length) {
@@ -952,7 +960,7 @@
         rules: [{ source: "", destination: "", exclude: [], enabled: true, overwrite: null }]
       });
     }
-    setConfigHint("请填写源路径与目标路径，保存后将写入设备根目录的 dsync.yml", "warn");
+    setConfigHint(t("log.createHint"), "warn");
     $("create-hint").textContent = "";
     markDirty();
     var inputs = $("cfg-rules").querySelectorAll(".r-source");
@@ -966,9 +974,9 @@
       body: JSON.stringify(payload || {})
     }).then(function (r) { return r.json(); })
       .then(function (data) {
-        // 后端统一包装为 {ok, result}，此处拆出 result 供调用方使用
+        // The backend wraps everything as {ok, result}; unwrap result for the caller
         if (data && data.ok === false) {
-          return { error: data.error || "操作失败" };
+          return { error: data.error || t("log.actionFailed") };
         }
         if (data && Object.prototype.hasOwnProperty.call(data, "result")) {
           return data.result;
@@ -976,17 +984,42 @@
         return data;
       })
       .catch(function (e) {
-        addLog("请求失败：" + e, "error");
+        addLog(t("log.requestFailed", { error: e }), "error");
         return { error: String(e) };
       });
   }
 
+  /* ---------------- language switching ---------------- */
+  function bindLanguage() {
+    var sel = $("lang-select");
+    if (!sel) return;
+    sel.value = window.DSyncI18n.getLang();
+    sel.addEventListener("change", function () {
+      window.DSyncI18n.setLang(sel.value);
+    });
+  }
+
+  /* Re-render everything whose text comes from JS after a language change. */
+  window.onLangChange = function () {
+    var sel = $("lang-select");
+    if (sel) sel.value = window.DSyncI18n.getLang();
+    render();
+    renderDevices();
+    refreshCardSelect();
+    renderRuleRows();
+    updateYamlPreview();
+    if (state.selectedCard) selectCard(state.selectedCard);
+    fetchState();
+  };
+
   bindEditor();
   bindLogFilters();
+  bindLanguage();
+  window.DSyncI18n.apply();
   render();
   connect();
   fetchState();
   setInterval(fetchState, 5000);
-  // 耗时列每秒刷新：同步中实时显示「当前时间 - 开始时间」
+  // Refresh the elapsed column every second: while syncing show "now - start"
   setInterval(refreshElapsed, 1000);
 })();

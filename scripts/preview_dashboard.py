@@ -1,6 +1,7 @@
-"""看板预览服务：启动本地看板并注入模拟同步数据，用于展示界面效果。
+"""Dashboard preview server: start the local dashboard with simulated sync data so
+the UI can be demonstrated.
 
-用法::
+Usage::
 
     python scripts/preview_dashboard.py --port 8765
 """
@@ -20,7 +21,7 @@ from dsync.config import load_config_file  # noqa: E402
 
 
 def build_fake_state(app: SyncApplication, workdir: Path) -> None:
-    """构造一份逼真的同步现场状态。"""
+    """Build a realistic in-progress sync state."""
     card = workdir / "FAKECARD"
     (card / "DCIM" / "100CANON").mkdir(parents=True, exist_ok=True)
     for index in range(48):
@@ -50,7 +51,7 @@ def build_fake_state(app: SyncApplication, workdir: Path) -> None:
         encoding="utf-8")
 
     with app._lock:
-        # 模拟一张已插入的外置设备，指向真实的临时目录
+        # Simulate an inserted external device pointing at a real temp directory
         app._devices[str(card).upper()] = {
             "path": str(card), "name": "CANON (E:)", "state": "syncing",
             "config": "dsync.yml", "enable": True,
@@ -79,7 +80,7 @@ def build_fake_state(app: SyncApplication, workdir: Path) -> None:
              "enabled": True},
         ]
         app._phase = "copying"
-        app._message = "正在同步 49 个文件…"
+        app._message = "Syncing 49 files..."
         app._total_files = 49
         app._done_files = 31
         app._current_file = str(card / "DCIM" / "100CANON" / "IMG_0031.jpg")
@@ -100,11 +101,11 @@ def build_fake_state(app: SyncApplication, workdir: Path) -> None:
              "copied": 55, "skipped": 12, "failed": 0, "elapsed": 9.04},
         ]
 
-    # 推一条日志到总线，让前端页面有内容
+    # Push some log lines onto the bus so the page has content
     for message, level in [
-        ("已复制 → D:/SD_Backup/Photos/100CANON/IMG_0029.jpg", "ok"),
-        ("已复制 → D:/SD_Backup/Photos/100CANON/IMG_0030.jpg", "ok"),
-        ("已跳过（重复）→ D:/SD_Backup/Docs/report.pdf", "warn"),
+        ("Copied → D:/SD_Backup/Photos/100CANON/IMG_0029.jpg", "ok"),
+        ("Copied → D:/SD_Backup/Photos/100CANON/IMG_0030.jpg", "ok"),
+        ("Skipped (duplicate) → D:/SD_Backup/Docs/report.pdf", "warn"),
     ]:
         app.bus.publish("log", message=message, level=level)
 
@@ -119,8 +120,8 @@ def main() -> int:
     app = SyncApplication()
     web = app.start_web(port=args.port)
     build_fake_state(app, workdir)
-    print(f"看板预览: {web.url}")
-    print("按 Ctrl+C 结束")
+    print(f"Dashboard preview: {web.url}")
+    print("Press Ctrl+C to stop")
     try:
         while True:
             time.sleep(1)

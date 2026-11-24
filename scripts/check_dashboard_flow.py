@@ -1,12 +1,12 @@
-"""看板新交互流程的端到端验证（走真实 HTTP 接口）。
+"""End-to-end verification of the dashboard's new interaction flow (over real HTTP).
 
-覆盖：
-  1. 全局状态接口
-  2. 选择设备（有配置 / 无配置两种情况）
-  3. enable 开关的读写
-  4. 规则编辑与保存
-  5. 手动同步触发
-  6. 页面结构检查
+Covers:
+  1. the global state API
+  2. selecting a device (both with and without a config)
+  3. reading and writing the enable flag
+  4. editing and saving rules
+  5. triggering a manual sync
+  6. checking the page structure
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# 隔离应用数据目录，避免污染用户环境
+# Isolate the app data directory so the user environment is not polluted
 _TMP = tempfile.mkdtemp(prefix="dsync_e2e_")
 os.environ["SDSYNC_DATA_DIR"] = _TMP
 
@@ -31,8 +31,8 @@ from dsync.app import SyncApplication  # noqa: E402
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-PASS = "  [通过]"
-FAIL = "  [失败]"
+PASS = "  [PASS]"
+FAIL = "  [FAIL]"
 failures: list[str] = []
 
 
@@ -91,42 +91,42 @@ def main() -> int:
     time.sleep(0.6)
 
     try:
-        print("\n[1] 全局状态接口")
+        print("\n[1] Global state API")
         state = api(base, "/api/state")
         for key in ("phase", "devices", "stats", "history", "selected_card"):
-            check(key in state, f"状态包含 {key}")
-        check("rules" in state, "状态包含当前规则")
+            check(key in state, f"state contains {key}")
+        check("rules" in state, "state contains the current rules")
 
-        print("\n[2] 选择设备（带配置）")
+        print("\n[2] Selecting a device (with config)")
         card = make_card(workdir, "E", with_config=True)
         result = post(base, "select_card", {"path": str(card)})
-        check(result.get("has_config") is True, "识别到配置文件")
-        check(result.get("rules") == 2, f"读到 2 条规则（实际 {result.get('rules')}）")
-        check(result.get("enable") is True, "enable 初始为 true")
-        check(state["selected_card"] == "", "初始未选中卡")
+        check(result.get("has_config") is True, "config file recognised")
+        check(result.get("rules") == 2, f"read 2 rules (got {result.get('rules')})")
+        check(result.get("enable") is True, "enable starts as true")
+        check(state["selected_card"] == "", "no card selected initially")
 
         state2 = api(base, "/api/state")
-        check(state2["selected_card"] == str(card), "选中状态已记录到全局快照")
+        check(state2["selected_card"] == str(card), "selection recorded in the global snapshot")
 
-        print("\n[3] 加载配置到编辑器")
+        print("\n[3] Loading the config into the editor")
         cfg = post(base, "get_config", {"card_path": str(card)})
-        check(cfg.get("exists") is True, "配置文件存在")
-        check(len(cfg["model"]["rules"]) == 2, "编辑模型含 2 条规则")
-        check(cfg["model"]["enable"] is True, "编辑模型含 enable 字段")
+        check(cfg.get("exists") is True, "config file exists")
+        check(len(cfg["model"]["rules"]) == 2, "edit model has 2 rules")
+        check(cfg["model"]["enable"] is True, "edit model has the enable field")
 
-        print("\n[4] enable 开关关闭")
+        print("\n[4] Turning enable off")
         res = post(base, "set_enabled", {"path": str(card), "enable": False})
-        check(res.get("enable") is False, "开关写入成功")
+        check(res.get("enable") is False, "flag written successfully")
         yaml_text = (card / "dsync.yml").read_text(encoding="utf-8")
-        check("enable: false" in yaml_text, "YAML 中已写入 enable: false")
+        check("enable: false" in yaml_text, "enable: false written to the YAML")
 
         reread = post(base, "get_config", {"card_path": str(card)})
-        check(reread["model"]["enable"] is False, "重新读取确认已持久化")
+        check(reread["model"]["enable"] is False, "re-read confirms persistence")
 
-        print("\n[5] enable=false 时手动同步仍应执行")
+        print("\n[5] A manual sync must still run when enable=false")
         out_dir = workdir / "OUT_E"
         res = post(base, "sync_now", {"path": str(card)})
-        check(res.get("started") is True, "手动同步已启动")
+        check(res.get("started") is True, "manual sync started")
         copied = 0
         for _ in range(40):
             time.sleep(0.4)
@@ -135,10 +135,10 @@ def main() -> int:
             if stats.get("total_files"):
                 copied = stats.get("copied_files", 0)
                 break
-        check(copied == 4, f"复制了 4 个文件（实际 {copied}）")
-        check((out_dir / "Photos" / "100CANON").exists(), "照片落到 Photos 目录")
+        check(copied == 4, f"copied 4 files (got {copied})")
+        check((out_dir / "Photos" / "100CANON").exists(), "photos landed in the Photos directory")
 
-        print("\n[6] 再次同步应全部跳过")
+        print("\n[6] A second sync should skip everything")
         post(base, "sync_now", {"path": str(card)})
         skipped = 0
         for _ in range(40):
@@ -148,9 +148,9 @@ def main() -> int:
             if stats.get("skipped_files") == 4:
                 skipped = stats["skipped_files"]
                 break
-        check(skipped == 4, f"重复文件全部跳过（实际 {skipped}）")
+        check(skipped == 4, f"all duplicate files skipped (got {skipped})")
 
-        print("\n[7] 页面保存规则（改目标目录 + 关闭 enable）")
+        print("\n[7] Saving rules from the page (new destination + enable off)")
         model = {
             "version": 1,
             "enable": False,
@@ -164,48 +164,48 @@ def main() -> int:
         }
         res = post(base, "save_config",
                    {"model": model, "card_path": str(card)})
-        check(res.get("saved") is True, "保存成功")
-        check(res.get("rules") == 1, "保存了 1 条规则")
+        check(res.get("saved") is True, "saved successfully")
+        check(res.get("rules") == 1, "saved 1 rule")
         saved_text = (card / "dsync.yml").read_text(encoding="utf-8")
-        check("Pictures" in saved_text, "新目标路径已写入 YAML")
-        check("enable: false" in saved_text, "enable=false 已写入 YAML")
-        check("*.tmp" in saved_text, "全局排除已写入 YAML")
+        check("Pictures" in saved_text, "new destination written to the YAML")
+        check("enable: false" in saved_text, "enable=false written to the YAML")
+        check("*.tmp" in saved_text, "global exclude written to the YAML")
 
         reread = post(base, "get_config", {"card_path": str(card)})
-        check(len(reread["model"]["rules"]) == 1, "重新读取只剩 1 条规则")
-        check(reread["model"]["rules"][0]["destination"] == "Pictures", "目标路径正确")
+        check(len(reread["model"]["rules"]) == 1, "re-read has exactly 1 rule")
+        check(reread["model"]["rules"][0]["destination"] == "Pictures", "destination is correct")
 
-        print("\n[8] 选择没有配置的卡")
+        print("\n[8] Selecting a card without a config")
         empty_card = make_card(workdir, "F", with_config=False)
         result = post(base, "select_card", {"path": str(empty_card)})
-        check(result.get("has_config") is False, "识别为无配置")
-        check(result.get("selected") == str(empty_card), "已切换到该卡")
+        check(result.get("has_config") is False, "recognised as having no config")
+        check(result.get("selected") == str(empty_card), "switched to that card")
 
-        print("\n[9] 页面结构")
+        print("\n[9] Page structure")
         with OPENER.open(base + "/", timeout=10) as resp:
             html = resp.read().decode("utf-8")
-        check("选择设备" in html, "包含设备选择区")
-        check("立即同步" in html, "包含手动同步按钮")
-        check("自动同步" in html, "包含 enable 开关")
-        check("尚未创建配置文件" in html, "包含无配置提示区")
-        check("运行日志" in html, "包含运行日志区")
-        check("历史记录" in html, "包含历史记录区")
-        check(html.index("选择设备") < html.index("同步配置") or "同步配置" not in html,
-              "配置区排在设备选择区之后")
-        check(html.index("运行日志") < html.index("历史记录"), "日志在历史之前")
+        check('data-i18n="section.selectDevice"' in html, "contains the device selection area")
+        check('data-i18n="action.syncNow"' in html, "contains the manual sync button")
+        check('data-i18n="config.autoSync"' in html, "contains the enable toggle")
+        check('data-i18n="section.noConfig"' in html, "contains the no-config prompt")
+        check('data-i18n="section.log"' in html, "contains the activity log area")
+        check('data-i18n="section.history"' in html, "contains the history area")
+        check(html.index("section.selectDevice") < html.index("section.config") or "section.config" not in html,
+              "the config area comes after the device selection")
+        check(html.index("section.log") < html.index("section.history"), "log comes before history")
 
-        print("\n[10] 历史记录")
+        print("\n[10] History")
         st = api(base, "/api/state")
-        check(len(st.get("history") or []) >= 2, f"历史记录有 {len(st.get('history') or [])} 条")
+        check(len(st.get("history") or []) >= 2, f"history has {len(st.get('history') or [])} entries")
 
-        print("\n[11] 路径选择接口结构（mock，不实际弹窗）")
+        print("\n[11] Path-picker API shape (mocked, no real dialog)")
         from dsync import app as app_module
         original = app_module.pick_path_for_rule
         app_module.pick_path_for_rule = lambda *a, **k: {
             "cancelled": True, "path": "", "absolute": ""}
         try:
             res = post(base, "pick_path", {"kind": "destination", "current": ""})
-            check(res.get("cancelled") is True, "路径选择接口返回结构化结果")
+            check(res.get("cancelled") is True, "path-picker API returns a structured result")
         finally:
             app_module.pick_path_for_rule = original
 
@@ -214,11 +214,11 @@ def main() -> int:
 
     print("\n" + "=" * 56)
     if failures:
-        print(f"失败 {len(failures)} 项：")
+        print(f"{len(failures)} checks failed:")
         for item in failures:
             print(f"  - {item}")
         return 1
-    print("全部检查通过")
+    print("All checks passed")
     return 0
 
 

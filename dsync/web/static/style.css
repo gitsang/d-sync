@@ -36,7 +36,7 @@ html, body {
   padding: 24px 20px 48px;
 }
 
-/* ---------------- 顶栏 ---------------- */
+/* ---------------- top bar ---------------- */
 .topbar {
   display: flex;
   align-items: center;
@@ -97,7 +97,7 @@ html, body {
 .btn.primary:hover { background: #2559e0; }
 .btn.small { padding: 4px 10px; font-size: 12px; }
 
-/* ---------------- 设备状态表 ---------------- */
+/* ---------------- device status table ---------------- */
 .device-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .device-table th {
   background: var(--surface-2);
@@ -130,7 +130,7 @@ html, body {
 }
 .bar.mini { height: 5px; }
 
-/* ---------------- 卡片 ---------------- */
+/* ---------------- cards ---------------- */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -151,7 +151,7 @@ html, body {
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
-/* ---------------- 进度条 ---------------- */
+/* ---------------- progress bar ---------------- */
 .bar {
   height: 9px;
   background: #e9edf5;
@@ -177,7 +177,7 @@ html, body {
 }
 .current b { color: var(--text); font-weight: 600; }
 
-/* ---------------- 列表 ---------------- */
+/* ---------------- lists ---------------- */
 .devices, .rules { list-style: none; margin: 0; padding: 0; }
 .devices li, .rules li {
   display: flex; align-items: center; gap: 10px;
@@ -204,7 +204,7 @@ html, body {
 .path { font-variant-numeric: tabular-nums; }
 .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---------------- 日志 ---------------- */
+/* ---------------- log ---------------- */
 .log {
   background: #0f1420;
   color: #c8d1e2;
@@ -232,7 +232,7 @@ html, body {
 .log-warn { color: #e6be6a; }
 .log-error { color: #ef8080; }
 
-/* ---------------- 日志等级过滤器 ---------------- */
+/* ---------------- log level filters ---------------- */
 .log-filters {
   display: flex;
   align-items: center;
@@ -249,7 +249,7 @@ html, body {
 .lvl-warn { color: #e6be6a; }
 .lvl-error { color: #ef8080; }
 
-/* ---------------- 表格 ---------------- */
+/* ---------------- tables ---------------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
@@ -257,7 +257,7 @@ th { color: var(--text-muted); font-weight: 600; font-size: 12px; }
 tbody tr:last-child td { border-bottom: none; }
 td.num { font-variant-numeric: tabular-nums; }
 
-/* ---------------- 配置编辑器 ---------------- */
+/* ---------------- config editor ---------------- */
 .editor-card { scroll-margin-top: 16px; }
 
 .editor-toolbar {
@@ -280,7 +280,7 @@ td.num { font-variant-numeric: tabular-nums; }
 .editor-main { min-width: 0; }
 .editor-side { min-width: 0; display: flex; flex-direction: column; }
 
-/* YAML 预览块：位于规则列表下方 */
+/* YAML preview block: sits below the rule list */
 .yaml-block {
   margin-top: 18px;
   padding-top: 14px;
@@ -436,7 +436,7 @@ td.num { font-variant-numeric: tabular-nums; }
 .hint.ok { color: var(--success); }
 .empty-hint { display: none; }
 
-/* ---------------- 设备选择 ---------------- */
+/* ---------------- device selection ---------------- */
 .select-card { margin-bottom: 14px; }
 .select-bar {
   display: flex;
@@ -478,7 +478,7 @@ td.num { font-variant-numeric: tabular-nums; }
 .switch-text b { font-size: 13px; font-weight: 600; }
 .switch-row .switch input:disabled + .switch-track { opacity: .45; cursor: not-allowed; }
 
-/* ---------------- 输入框 + 按钮 ---------------- */
+/* ---------------- inputs and buttons ---------------- */
 .input-with-btn {
   display: flex;
   align-items: center;
@@ -493,7 +493,7 @@ td.num { font-variant-numeric: tabular-nums; }
   border-radius: 7px;
 }
 
-/* ---------------- 空状态 ---------------- */
+/* ---------------- empty states ---------------- */
 .empty-card { margin-bottom: 14px; }
 .empty-body {
   display: flex;
@@ -528,7 +528,7 @@ td.num { font-variant-numeric: tabular-nums; }
   padding: 1px 5px;
 }
 
-/* ---------------- 页脚 ---------------- */
+/* ---------------- footer ---------------- */
 .footer {
   display: flex; justify-content: space-between; gap: 12px;
   flex-wrap: wrap;

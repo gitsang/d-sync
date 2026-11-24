@@ -1,6 +1,6 @@
-"""同步过程实时演示：启动看板 -> 触发同步 -> 抓取 SSE 进度流。
+"""Live sync demo: start the dashboard -> trigger a sync -> capture the SSE progress stream.
 
-用于验证「页面能展示同步进度」这一核心诉求。
+Used to verify the core requirement that the page can show sync progress.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-# 本地请求绕过环境代理
+# Bypass environment proxies for local requests
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +36,7 @@ def main() -> int:
         app = SyncApplication()
         web = app.start_web(port=8792)
         time.sleep(0.5)
-        print(f"看板: {web.url}")
+        print(f"Dashboard: {web.url}")
 
         events: list[dict] = []
 
@@ -54,7 +54,7 @@ def main() -> int:
         thread.start()
         time.sleep(1.0)
 
-        # 手动触发一次同步
+        # Trigger a sync manually
         from dsync.config import load_config_file
         config_path = card / "dsync.yml"
         config_path.write_text(
@@ -69,7 +69,7 @@ def main() -> int:
         app.run_sync(card, config)
         time.sleep(1.5)
 
-        print("\n=== SSE 收到的事件流 ===")
+        print("\n=== Events received over SSE ===")
         for evt in events:
             name = evt.get("event")
             if name == "file_start":
@@ -77,24 +77,24 @@ def main() -> int:
             elif name == "file_done":
                 print(f"  file_done    {Path(evt.get('source','')).name} -> {evt.get('status')}")
             elif name == "plan":
-                print(f"  plan         {evt.get('total_files')} 个文件 / {evt.get('total_bytes')} 字节")
+                print(f"  plan         {evt.get('total_files')} files / {evt.get('total_bytes')} bytes")
             elif name == "finished":
                 st = evt.get("stats", {})
-                print(f"  finished     复制 {st.get('copied_files')} 跳过 {st.get('skipped_files')} "
-                      f"耗时 {st.get('elapsed')}s")
+                print(f"  finished     copied {st.get('copied_files')} skipped {st.get('skipped_files')} "
+                      f"took {st.get('elapsed')}s")
             elif name == "phase":
                 print(f"  phase        {evt.get('phase')}: {evt.get('message')}")
 
-        # 第二次同步，验证跳过
+        # Second sync, to verify skipping
         events.clear()
         app2 = SyncApplication()
         app2.run_sync(card, config)
         st = app2.snapshot()["stats"]
-        print("\n=== 第二次同步（重复文件）===")
-        print(f"  复制 {st['copied_files']} 个，跳过 {st['skipped_files']} 个")
+        print("\n=== Second sync (duplicate files) ===")
+        print(f"  copied {st['copied_files']}, skipped {st['skipped_files']}")
 
         web.stop()
-        print("\n演示完成。")
+        print("\nDemo finished.")
         return 0
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

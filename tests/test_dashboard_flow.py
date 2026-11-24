@@ -1,4 +1,5 @@
-"""看板交互流程的测试：选卡、enable 开关、路径选择、手动同步。"""
+"""Tests for the dashboard interaction flow: card selection, the enable flag,
+path picking and manual sync."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def _make_card(tmp_path: Path, *, with_config: bool = True,
                enable: bool = True) -> Path:
-    """造一个模拟 SD 卡。"""
+    """Build a simulated SD card."""
     card = tmp_path / "E"
     (card / "DCIM" / "100CANON").mkdir(parents=True, exist_ok=True)
     (card / "DCIM" / "100CANON" / "IMG_0001.jpg").write_bytes(b"a" * 1024)
@@ -45,7 +46,7 @@ def _make_card(tmp_path: Path, *, with_config: bool = True,
     return card
 
 
-# ====================================================================== 配置
+# ====================================================================== config
 def test_config_enable_parses():
     cfg = parse_config({"enable": False, "rules": [
         {"source": "DCIM", "destination": "P"}]})
@@ -96,7 +97,7 @@ def test_editable_model_roundtrip_keeps_rule_enabled():
     assert again.rules[0].enabled is False
 
 
-# ====================================================================== 应用
+# ====================================================================== app
 def test_select_card_without_config_reports_no_config(tmp_path):
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=False)
@@ -130,7 +131,7 @@ def test_select_card_updates_snapshot_selected(tmp_path):
 
 
 def test_handle_device_does_not_autosync_when_enable_false(tmp_path, monkeypatch):
-    """enable=false 时插入设备不应自动同步。"""
+    """With enable=false, inserting a device must not sync automatically."""
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=True, enable=False)
     out = tmp_path / "OUT"
@@ -140,8 +141,8 @@ def test_handle_device_does_not_autosync_when_enable_false(tmp_path, monkeypatch
                         lambda *a, **k: called.append(a))
 
     app.on_device_inserted(card)
-    assert called == [], "enable=false 时不应自动同步"
-    assert not out.exists(), "不应产生任何输出"
+    assert called == [], "no auto-sync when enable=false"
+    assert not out.exists(), "no output should be produced"
 
 
 def test_handle_device_autosyncs_when_enable_true(tmp_path, monkeypatch):
@@ -150,7 +151,7 @@ def test_handle_device_autosyncs_when_enable_true(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(app, "run_sync", lambda *a, **k: called.append(a))
     app.on_device_inserted(card)
-    assert len(called) == 1, "enable=true 时应自动同步"
+    assert len(called) == 1, "enable=true should sync automatically"
 
 
 def test_set_enabled_writes_back_to_yaml(tmp_path):
@@ -171,7 +172,7 @@ def test_set_enabled_can_turn_back_on(tmp_path):
 
 
 def test_action_sync_now_rejects_when_no_config(tmp_path, monkeypatch):
-    """卡上没有配置文件时，手动同步应报错且不启动任何任务。"""
+    """With no config file on the card, a manual sync must error without starting work."""
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=False)
 
@@ -184,13 +185,13 @@ def test_action_sync_now_rejects_when_no_config(tmp_path, monkeypatch):
 
 
 def test_no_local_template_mechanism(tmp_path):
-    """本地模板机制已移除：应用层不应再暴露 _template_path。"""
+    """The local template mechanism was removed: the app layer must not expose _template_path."""
     app = SyncApplication()
     assert not hasattr(app, "_template_path")
 
 
 def test_action_sync_now_ignores_enable_false(tmp_path, monkeypatch):
-    """enable=false 时手动点击仍应执行同步。"""
+    """With enable=false, a manual click must still run the sync."""
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=True, enable=False)
     started = []
@@ -202,21 +203,21 @@ def test_action_sync_now_ignores_enable_false(tmp_path, monkeypatch):
 
 
 def test_action_pick_path_reports_unavailable_gracefully(monkeypatch):
-    """路径选择不可用时不应抛异常，而是返回可读错误。"""
+    """When the path picker is unavailable it must return a readable error, not raise."""
     from dsync import app as app_module
 
     def _boom(*args, **kwargs):
-        raise app_module.PickerUnavailable("测试环境不支持")
+        raise app_module.PickerUnavailable("not supported in the test environment")
 
     monkeypatch.setattr(app_module, "pick_path_for_rule", _boom)
     app = SyncApplication()
     result = app.action_pick_path({"kind": "destination", "current": ""})
     assert "error" in result
-    assert "选择窗口" in result["error"]
+    assert "could not open the picker" in result["error"].lower()
 
 
 def test_action_pick_path_returns_cancelled(monkeypatch):
-    """用户取消时返回 cancelled 标记。"""
+    """A user cancel returns the cancelled flag."""
     from dsync import app as app_module
 
     monkeypatch.setattr(
@@ -228,7 +229,7 @@ def test_action_pick_path_returns_cancelled(monkeypatch):
 
 
 def test_action_pick_path_passes_selected_card(monkeypatch):
-    """未显式指定卡时，应使用页面当前选中的卡。"""
+    """Without an explicit card, the one currently selected on the page is used."""
     from dsync import app as app_module
 
     seen = {}
@@ -246,9 +247,9 @@ def test_action_pick_path_passes_selected_card(monkeypatch):
     assert seen["card_root"] == "E:\\"
 
 
-# ====================================================================== 路径选择
+# ====================================================================== path picking
 def test_pick_path_for_source_converts_to_relative(monkeypatch, tmp_path):
-    """源路径选择结果应换算成相对卡根目录的路径。"""
+    """A source-path pick must be converted into a path relative to the card root."""
     from dsync import filedialog
 
     card = tmp_path / "E"
@@ -263,7 +264,7 @@ def test_pick_path_for_source_converts_to_relative(monkeypatch, tmp_path):
 
 
 def test_pick_path_for_source_rejects_outside_card(monkeypatch, tmp_path):
-    """选到卡外的目录应报错。"""
+    """Picking a directory outside the card must error."""
     from dsync import filedialog
 
     card = tmp_path / "E"
@@ -296,7 +297,7 @@ def test_pick_path_cancelled(monkeypatch):
 
 
 def test_filedialog_module_imports_cleanly():
-    """模块必须能在无 COM 环境下正常导入。"""
+    """The module must import cleanly in an environment without COM."""
     from dsync import filedialog
     assert hasattr(filedialog, "pick_folder")
     assert hasattr(filedialog, "pick_path_for_rule")
@@ -305,9 +306,10 @@ def test_filedialog_module_imports_cleanly():
 # ====================================================================== HTTP
 @pytest.fixture()
 def live_app(tmp_path):
-    """启动一个真实的后端 + HTTP 服务。
+    """Start a real backend plus HTTP service.
 
-    端口用 0 让系统分配，避免与残留进程或并发测试抢端口。
+    Port 0 lets the OS allocate one, avoiding races with leftover processes or
+    concurrent tests.
     """
     app = SyncApplication()
     web = app.start_web(host="127.0.0.1", port=0)
@@ -399,28 +401,32 @@ def test_http_save_config_does_not_autosync_when_disabled(live_app, tmp_path, mo
           {"model": model, "card_path": str(card)})
     import time
     time.sleep(0.4)
-    assert called == [], "enable=false 时保存配置不应触发同步"
+    assert called == [], "saving a config with enable=false must not trigger a sync"
 
 
 def test_http_index_contains_select_device_section(live_app):
     app, base = live_app
     with OPENER.open(base + "/", timeout=10) as resp:
         html = resp.read().decode("utf-8")
-    assert "选择设备" in html
-    assert "立即同步" in html
-    assert "自动同步" in html
-    assert "尚未创建配置文件" in html
-    # 全局状态区已移除，改为每设备一行的状态表
-    assert "设备状态" in html
-    assert "同步进度" in html
-    assert "本次同步耗时" in html
-    assert "全局状态" not in html
-    # 本地模板入口已移除
-    assert "存为模板" not in html
+    # Visible text is produced by the i18n tables, so assert on the keys that
+    # are wired into the markup.
+    assert 'data-i18n="section.selectDevice"' in html
+    assert 'data-i18n="action.syncNow"' in html
+    assert 'data-i18n="config.autoSync"' in html
+    assert 'data-i18n="section.noConfig"' in html
+    # The global-status section was removed in favour of a per-device status table
+    assert 'data-i18n="section.devices"' in html
+    assert 'data-i18n="col.progress"' in html
+    assert 'data-i18n="col.elapsed"' in html
+    assert 'data-i18n="section.global"' not in html
+    # The local template entry point was removed
+    assert 'data-i18n="action.saveTemplate"' not in html
+    # The i18n bundle must be loaded before the app logic
+    assert html.index("/static/i18n.js") < html.index("/static/app.js")
 
 
 def test_http_index_has_log_level_filters(live_app):
-    """运行日志支持按等级过滤。"""
+    """The activity log supports level filtering."""
     app, base = live_app
     with OPENER.open(base + "/", timeout=10) as resp:
         html = resp.read().decode("utf-8")
@@ -430,23 +436,23 @@ def test_http_index_has_log_level_filters(live_app):
 
 
 def test_http_index_places_save_button_in_card_head(live_app):
-    """保存配置按钮应在同步配置卡片右上角。"""
+    """The save-config button belongs in the top right of the config card."""
     app, base = live_app
     with OPENER.open(base + "/", timeout=10) as resp:
         html = resp.read().decode("utf-8")
     editor_pos = html.index('id="editor-card"')
     head_pos = html.index('id="btn-save-config"', editor_pos)
-    # 保存按钮位于卡片头部（card-head）内、YAML 预览之前
+    # The save button sits inside the card head, before the YAML preview
     card_head_end = html.index("</div>", html.index('class="card-head"', editor_pos))
     assert head_pos < card_head_end
-    # YAML 预览位于规则列表下方
+    # The YAML preview sits below the rule list
     assert html.index('id="cfg-rules"') < html.index('id="yaml-preview"')
-    # 旧的侧栏容器已移除
+    # The old sidebar container was removed
     assert "editor-side" not in html
 
 
 def test_sync_now_records_started_at(tmp_path, monkeypatch):
-    """同步进行中应记录开始时间，供前端实时计算耗时。"""
+    """A running sync must record its start time so the front end can compute elapsed time."""
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=True)
     app.on_device_inserted(card)
@@ -456,7 +462,7 @@ def test_sync_now_records_started_at(tmp_path, monkeypatch):
 
 
 def test_device_snapshot_exposes_elapsed_fields(tmp_path):
-    """设备状态需带上耗时相关的字段。"""
+    """Device state must carry the fields needed for the elapsed time."""
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=True)
     app.on_device_inserted(card)

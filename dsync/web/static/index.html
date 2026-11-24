@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>D-Sync · 同步看板</title>
+<title>D-Sync · Sync Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,33 +18,37 @@
         </svg>
       </div>
       <div>
-        <h1>D-Sync 同步看板</h1>
-        <p class="sub" id="subtitle">正在连接…</p>
+        <h1 data-i18n="app.heading">D-Sync Sync Dashboard</h1>
+        <p class="sub" id="subtitle" data-i18n="app.subtitle">Connecting…</p>
       </div>
     </div>
     <div class="topbar-actions">
       <span class="pill" id="conn-pill" data-state="connecting">
-        <span class="dot"></span><span id="conn-text">连接中</span>
+        <span class="dot"></span><span id="conn-text" data-i18n="conn.connecting">Connecting</span>
       </span>
-      <button class="btn" id="btn-rescan" type="button">重新扫描</button>
-      <button class="btn primary" id="btn-open-folder" type="button">打开目录</button>
+      <button class="btn" id="btn-rescan" type="button" data-i18n="action.rescan">Rescan</button>
+      <button class="btn primary" id="btn-open-folder" type="button" data-i18n="action.openFolder">Open folder</button>
+      <select class="btn" id="lang-select" data-i18n-aria="lang.label" aria-label="Language" style="padding:6px 8px">
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
     </div>
   </header>
 
-  <!-- ============ 设备状态 ============ -->
+  <!-- ============ device status ============ -->
   <section class="card">
     <div class="card-head">
-      <h2>设备状态</h2>
+      <h2 data-i18n="section.devices">Device status</h2>
       <span class="muted" id="device-count">0</span>
     </div>
     <div class="table-wrap">
       <table class="device-table">
         <thead>
           <tr>
-            <th style="width:26%">设备名</th>
-            <th style="width:16%">当前状态</th>
-            <th style="width:34%">同步进度</th>
-            <th style="width:24%">本次同步耗时</th>
+            <th style="width:26%" data-i18n="col.device">Device</th>
+            <th style="width:16%" data-i18n="col.state">State</th>
+            <th style="width:34%" data-i18n="col.progress">Progress</th>
+            <th style="width:24%" data-i18n="col.elapsed">Elapsed</th>
           </tr>
         </thead>
         <tbody id="devices"></tbody>
@@ -52,29 +56,29 @@
     </div>
   </section>
 
-  <!-- ============ 选择设备 ============ -->
+  <!-- ============ device selection ============ -->
   <section class="card select-card">
     <div class="card-head">
-      <h2>选择设备</h2>
-      <span class="muted" id="selected-hint">未选择</span>
+      <h2 data-i18n="section.selectDevice">Select device</h2>
+      <span class="muted" id="selected-hint" data-i18n="devices.notSelected">None selected</span>
     </div>
     <div class="select-bar">
-      <select id="card-select" aria-label="选择设备"></select>
-      <button class="btn" id="btn-refresh-cards" type="button">刷新列表</button>
-      <button class="btn primary" id="btn-sync-now" type="button" disabled>立即同步</button>
-      <button class="btn ghost" id="btn-cancel-sync" type="button" disabled>取消同步</button>
+      <select id="card-select" data-i18n-aria="section.selectDevice" aria-label="Select device"></select>
+      <button class="btn" id="btn-refresh-cards" type="button" data-i18n="action.refreshList">Refresh list</button>
+      <button class="btn primary" id="btn-sync-now" type="button" disabled data-i18n="action.syncNow">Sync now</button>
+      <button class="btn ghost" id="btn-cancel-sync" type="button" disabled data-i18n="action.cancelSync">Cancel sync</button>
     </div>
-    <p class="hint">仅列出外置设备（U 盘、读卡器等）。</p>
+    <p class="hint" data-i18n="devices.selectHint">Only external devices (USB sticks, card readers, ...) are listed.</p>
   </section>
 
-  <!-- ============ 配置区（无配置时不显示） ============ -->
+  <!-- ============ configuration (hidden when there is none) ============ -->
   <section class="card editor-card" id="editor-card" hidden>
     <div class="card-head">
-      <h2>同步配置</h2>
+      <h2 data-i18n="section.config">Sync configuration</h2>
       <div class="head-tools">
-        <span class="tag" id="config-target-tag">设备配置</span>
-        <button class="btn small" id="btn-validate" type="button">校验</button>
-        <button class="btn small primary" id="btn-save-config" type="button">保存配置</button>
+        <span class="tag" id="config-target-tag" data-i18n="config.targetTag">Device config</span>
+        <button class="btn small" id="btn-validate" type="button" data-i18n="action.validate">Validate</button>
+        <button class="btn small primary" id="btn-save-config" type="button" data-i18n="action.saveConfig">Save config</button>
       </div>
     </div>
 
@@ -87,74 +91,74 @@
         <span class="switch-track"></span>
       </span>
       <span class="switch-text">
-        <b>自动同步</b>
-        <span class="muted">开启后，插入该设备将自动开始同步；关闭后需手动点「立即同步」</span>
+        <b data-i18n="config.autoSync">Auto-sync</b>
+        <span class="muted" data-i18n="config.autoSyncHint">When on, inserting this device starts a sync automatically; when off, press "Sync now".</span>
       </span>
     </label>
 
     <div class="editor-body">
       <div class="sub-head">
-        <h3>全局设置</h3>
+        <h3 data-i18n="config.global">Global settings</h3>
       </div>
       <div class="form-grid">
         <label class="field">
-          <span class="field-label">目标根目录</span>
+          <span class="field-label" data-i18n="config.destRoot">Destination root</span>
           <span class="input-with-btn">
-            <input type="text" id="cfg-dest-root" placeholder="例如 D:/SD_Backup">
-            <button class="btn tiny" id="btn-pick-dest-root" type="button" title="浏览文件夹">浏览…</button>
+            <input type="text" id="cfg-dest-root" data-i18n-placeholder="config.destRootPlaceholder" placeholder="e.g. D:/SD_Backup">
+            <button class="btn tiny" id="btn-pick-dest-root" type="button" data-i18n-title="config.browseFolder" data-i18n="action.browse" title="Browse for a folder">Browse…</button>
           </span>
-          <span class="field-hint">规则中的相对目标路径基于此目录解析</span>
+          <span class="field-hint" data-i18n="config.destRootHint">Relative destinations in the rules resolve against this directory</span>
         </label>
         <label class="field">
-          <span class="field-label">全局排除</span>
+          <span class="field-label" data-i18n="config.exclude">Global excludes</span>
           <input type="text" id="cfg-exclude" placeholder="*.tmp, Thumbs.db">
-          <span class="field-hint">逗号分隔，对所有规则生效</span>
+          <span class="field-hint" data-i18n="config.excludeHint">Comma separated, applied to every rule</span>
         </label>
         <label class="field check-field">
-          <span class="field-label">内容不同时覆盖</span>
+          <span class="field-label" data-i18n="config.overwrite">Overwrite when content differs</span>
           <span class="switch">
             <input type="checkbox" id="cfg-overwrite">
             <span class="switch-track"></span>
           </span>
-          <span class="field-hint">关闭时保留已有文件；内容完全一致始终跳过</span>
+          <span class="field-hint" data-i18n="config.overwriteHint">When off, existing files are kept; identical content is always skipped</span>
         </label>
       </div>
 
       <div class="sub-head">
-        <h3>规则列表</h3>
-        <button class="btn small" id="btn-add-rule" type="button">+ 添加规则</button>
+        <h3 data-i18n="section.rules">Rule list</h3>
+        <button class="btn small" id="btn-add-rule" type="button" data-i18n="action.addRule">+ Add rule</button>
       </div>
       <div class="rule-table-wrap">
         <table class="rule-table">
           <thead>
             <tr>
-              <th style="width:34%">源路径（设备内）</th>
-              <th style="width:34%">目标路径</th>
-              <th style="width:16%">排除</th>
-              <th style="width:8%">启用</th>
-              <th style="width:8%">覆盖</th>
+              <th style="width:34%" data-i18n="col.source">Source (on device)</th>
+              <th style="width:34%" data-i18n="col.destination">Destination</th>
+              <th style="width:16%" data-i18n="col.exclude">Exclude</th>
+              <th style="width:8%" data-i18n="col.enabled">Enabled</th>
+              <th style="width:8%" data-i18n="col.overwrite">Overwrite</th>
               <th style="width:5%"></th>
             </tr>
           </thead>
           <tbody id="cfg-rules"></tbody>
         </table>
       </div>
-      <p class="hint empty-hint" id="rules-empty">还没有规则，点击「添加规则」开始配置。</p>
+      <p class="hint empty-hint" id="rules-empty" data-i18n="config.rulesEmpty">No rules yet. Press "Add rule" to start configuring.</p>
 
       <div class="yaml-block">
         <div class="sub-head">
-          <h3>YAML 预览</h3>
-          <button class="btn small ghost" id="btn-copy-yaml" type="button">复制</button>
+          <h3 data-i18n="section.yaml">YAML preview</h3>
+          <button class="btn small ghost" id="btn-copy-yaml" type="button" data-i18n="action.copy">Copy</button>
         </div>
         <pre class="yaml-preview" id="yaml-preview">—</pre>
       </div>
     </div>
   </section>
 
-  <!-- ============ 无配置提示 ============ -->
+  <!-- ============ no-config prompt ============ -->
   <section class="card empty-card" id="empty-card" hidden>
     <div class="card-head">
-      <h2>尚未创建配置文件</h2>
+      <h2 data-i18n="section.noConfig">No config file yet</h2>
     </div>
     <div class="empty-body">
       <p class="empty-icon" aria-hidden="true">
@@ -163,42 +167,42 @@
           <path d="M12 12v3M10.8 13.6 12 15l1.2-1.4"/>
         </svg>
       </p>
-      <p class="empty-title" id="empty-title">这台设备还没有配置文件</p>
-      <p class="empty-desc" id="empty-desc">创建一个 <code>dsync.yml</code>，写好源路径与目标路径后即可自动同步。</p>
-      <button class="btn primary" id="btn-create-config" type="button">创建配置文件</button>
+      <p class="empty-title" id="empty-title">This device has no config file yet</p>
+      <p class="empty-desc" id="empty-desc" data-i18n-html="empty.desc">Create a <code>dsync.yml</code> with the source and destination paths and it will sync automatically.</p>
+      <button class="btn primary" id="btn-create-config" type="button" data-i18n="action.createConfig">Create config file</button>
       <p class="hint" id="create-hint"></p>
     </div>
   </section>
 
-  <!-- ============ 运行日志 ============ -->
+  <!-- ============ activity log ============ -->
   <section class="card">
     <div class="card-head">
-      <h2>运行日志</h2>
+      <h2 data-i18n="section.log">Activity log</h2>
       <div class="head-tools">
-        <div class="log-filters" id="log-filters" role="group" aria-label="日志等级过滤">
+        <div class="log-filters" id="log-filters" role="group" data-i18n-aria="section.log" aria-label="Log level filters">
           <label class="check lvl-debug"><input type="checkbox" data-log-level="debug" checked> DEBUG</label>
           <label class="check lvl-info"><input type="checkbox" data-log-level="info" checked> INFO</label>
           <label class="check lvl-warn"><input type="checkbox" data-log-level="warn" checked> WARN</label>
           <label class="check lvl-error"><input type="checkbox" data-log-level="error" checked> ERROR</label>
         </div>
-        <label class="check"><input type="checkbox" id="autoscroll" checked> 自动滚动</label>
-        <button class="btn small" id="btn-clear-log" type="button">清空</button>
+        <label class="check"><input type="checkbox" id="autoscroll" checked> <span data-i18n="logfilter.autoscroll">Auto-scroll</span></label>
+        <button class="btn small" id="btn-clear-log" type="button" data-i18n="action.clear">Clear</button>
       </div>
     </div>
     <div class="log" id="log"></div>
   </section>
 
-  <!-- ============ 历史记录 ============ -->
+  <!-- ============ history ============ -->
   <section class="card">
     <div class="card-head">
-      <h2>历史记录</h2>
+      <h2 data-i18n="section.history">History</h2>
       <span class="muted" id="history-count">0</span>
     </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>时间</th><th>设备</th><th>结果</th><th>复制</th><th>跳过</th><th>耗时</th>
+            <th data-i18n="col.time">Time</th><th data-i18n="col.device">Device</th><th data-i18n="col.state">State</th><th data-i18n="col.copied">Copied</th><th data-i18n="col.skipped">Skipped</th><th data-i18n="col.elapsed">Elapsed</th>
           </tr>
         </thead>
         <tbody id="history"></tbody>
@@ -208,9 +212,10 @@
 
   <footer class="footer">
     <span id="footer-info">D-Sync v1.0.0</span>
-    <span class="muted">本页仅在本机 127.0.0.1 提供服务</span>
+    <span class="muted" data-i18n="app.footer">This page is served locally on 127.0.0.1 only</span>
   </footer>
 </div>
+<script src="/static/i18n.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -1,7 +1,8 @@
-"""D-Sync 可执行入口。
+"""D-Sync executable entry point.
 
-PyInstaller 以本文件作为打包入口。此处必须使用绝对导入
-（``python -m dsync`` 走包内相对导入，本文件则是独立脚本）。
+PyInstaller uses this file as its packaging entry point. Absolute imports are
+required here (``python -m dsync`` uses relative imports inside the package,
+whereas this file is a standalone script).
 """
 
 from __future__ import annotations
@@ -10,12 +11,12 @@ import multiprocessing
 import sys
 from pathlib import Path
 
-# 允许直接运行本文件
+# Allow running this file directly
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dsync.cli import main  # noqa: E402
 
 if __name__ == "__main__":
-    # 打包为窗口程序时，允许多进程重新启动
+    # When packaged as a windowed app, allow multiprocessing to respawn
     multiprocessing.freeze_support()
     raise SystemExit(main())

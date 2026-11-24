@@ -1,6 +1,6 @@
-"""用打包好的 EXE 做最终验收：真实跑一遍「插入 -> 同步 -> 跳过重复」。
+"""Final acceptance with the packaged EXE: really run "insert -> sync -> skip duplicates".
 
-用法::
+Usage::
 
     python scripts/verify_exe.py
 """
@@ -16,12 +16,12 @@ import time
 import urllib.request
 from pathlib import Path
 
-# 本地请求必须绕过环境代理，否则会被代理拦截返回 502
+# Local requests must bypass environment proxies or they get intercepted and return 502
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "dist" / "D-Sync.exe"
-PASS, FAIL = "  [通过]", "  [失败]"
+PASS, FAIL = "  [PASS]", "  [FAIL]"
 failures: list[str] = []
 
 
@@ -38,7 +38,7 @@ def api(base: str, path: str) -> dict:
 
 def main() -> int:
     if not EXE.exists():
-        print(f"未找到 EXE: {EXE}\n请先运行 python scripts/build_exe.py")
+        print(f"EXE not found: {EXE}\nRun python scripts/build_exe.py first")
         return 2
 
     workdir = Path(tempfile.mkdtemp(prefix="dsync_exe_"))
@@ -58,7 +58,7 @@ def main() -> int:
             encoding="utf-8")
 
         port = 8795
-        print(f"[1] 启动 EXE: {EXE.name}")
+        print(f"[1] Starting the EXE: {EXE.name}")
         proc = subprocess.Popen(
             [str(EXE), "--no-tray", "--no-browser", "--port", str(port)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -73,25 +73,25 @@ def main() -> int:
                 break
             except Exception:
                 continue
-        check(ready, "EXE 启动并监听本地端口")
+        check(ready, "the EXE started and listens on a local port")
         if not ready:
             print(proc.stderr.read().decode("utf-8", errors="replace")[:2000])
             return 1
 
-        print("\n[2] 看板接口")
+        print("\n[2] Dashboard API")
         state = api(base, "/api/state")
-        check(state.get("version") is not None, "状态接口返回版本号")
+        check(state.get("version") is not None, "the state API returns a version")
         with OPENER.open(base + "/", timeout=10) as resp:
             html = resp.read().decode("utf-8")
-        check("同步看板" in html, "看板首页正常渲染")
+        check('data-i18n="app.heading"' in html, "the dashboard index renders")
 
-        print("\n[3] 通过 API 触发同步（模拟 SD 卡插入）")
+        print("\n[3] Triggering a sync over the API (simulating a card insert)")
         req = urllib.request.Request(
             base + "/api/sync_now", data=json.dumps({"path": str(card)}).encode(),
             method="POST", headers={"Content-Type": "application/json"})
         with OPENER.open(req, timeout=15) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-        check(result.get("ok") is True, "sync_now 接口接受请求")
+        check(result.get("ok") is True, "the sync_now API accepted the request")
 
         copied = 0
         for _ in range(30):
@@ -101,10 +101,10 @@ def main() -> int:
             if stats and not state.get("syncing"):
                 copied = stats["copied_files"]
                 break
-        check(copied == 6, f"同步复制 6 个文件（实际 {copied}）")
-        check((backup / "Photos" / "P0.jpg").exists(), "文件已落盘到目标路径")
+        check(copied == 6, f"the sync copied 6 files (got {copied})")
+        check((backup / "Photos" / "P0.jpg").exists(), "files landed at the destination")
 
-        print("\n[4] 再次同步（应跳过全部重复）")
+        print("\n[4] Syncing again (all duplicates should be skipped)")
         req = urllib.request.Request(
             base + "/api/sync_now", data=json.dumps({"path": str(card)}).encode(),
             method="POST", headers={"Content-Type": "application/json"})
@@ -118,17 +118,17 @@ def main() -> int:
             if stats and stats.get("skipped_files") == 6:
                 skipped = stats["skipped_files"]
                 break
-        check(skipped == 6, f"重复文件全部跳过（实际跳过 {skipped}）")
+        check(skipped == 6, f"all duplicate files skipped (skipped {skipped})")
 
-        print("\n[5] 页面配置规则（EXE 内）")
+        print("\n[5] Configuring rules from the page (inside the EXE)")
         cfg_req = urllib.request.Request(
             base + "/api/get_config",
             data=json.dumps({"card_path": str(card)}).encode(),
             method="POST", headers={"Content-Type": "application/json"})
         with OPENER.open(cfg_req, timeout=15) as resp:
             cfg = json.loads(resp.read().decode("utf-8"))
-        check(cfg["result"]["exists"] is True, "EXE 可读取卡上配置")
-        check(cfg["result"]["model"]["rules"][0]["source"] == "DCIM", "规则内容正确")
+        check(cfg["result"]["exists"] is True, "the EXE can read the card config")
+        check(cfg["result"]["model"]["rules"][0]["source"] == "DCIM", "rule content is correct")
 
         save_req = urllib.request.Request(
             base + "/api/save_config",
@@ -144,34 +144,34 @@ def main() -> int:
             method="POST", headers={"Content-Type": "application/json"})
         with OPENER.open(save_req, timeout=15) as resp:
             saved = json.loads(resp.read().decode("utf-8"))
-        check(saved["result"]["saved"] is True, "页面配置保存成功")
+        check(saved["result"]["saved"] is True, "the page saved the config")
         check("PageConfigured" in (card / "dsync.yml").read_text(encoding="utf-8"),
-              "YAML 已写回 SD 卡")
+              "the YAML was written back to the card")
 
-        # 保存后自动重新同步是异步的，等它跑完
+        # The auto-resync after saving is asynchronous, so wait for it to finish
         landed = False
         for _ in range(30):
             time.sleep(0.5)
             if (workdir / "OUT" / "PageConfigured").exists():
                 landed = True
                 break
-        check(landed, "新规则已实际生效并落盘")
+        check(landed, "the new rules took effect and the files landed")
 
-        print("\n[6] 清理与退出")
+        print("\n[6] Cleanup and exit")
         proc.terminate()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-        check(True, "EXE 可正常响应终止信号")
+        check(True, "the EXE responds to the termination signal")
 
         print()
         if failures:
-            print(f"=== {len(failures)} 项失败 ===")
+            print(f"=== {len(failures)} checks failed ===")
             for item in failures:
                 print(f"  - {item}")
             return 1
-        print("=== EXE 验收全部通过 ===")
+        print("=== EXE acceptance passed ===")
         return 0
     finally:
         if proc and proc.poll() is None:

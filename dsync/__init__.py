@@ -1,10 +1,10 @@
-"""D-Sync —— 外置设备自动同步守护程序。
+"""D-Sync — automatic sync daemon for external devices.
 
-功能概览：
-  * 后台常驻（系统托盘），监听 SD 卡插入/拔出
-  * 读取 SD 卡根目录的 YAML 配置，按配置把文件复制到目标路径
-  * 自动跳过重复文件（按内容哈希判定）
-  * 本地 Web 看板展示同步进度、日志与历史
+Overview:
+  * Runs in the background (system tray) and watches for SD card insert/removal
+  * Reads a YAML config from the card root and copies files to the destinations
+  * Skips duplicate files automatically (decided by content hash)
+  * Shows sync progress, logs and history on a local web dashboard
 """
 
 __version__ = "1.0.0"

@@ -1,6 +1,6 @@
-"""打包后 EXE 的完整验收：走真实 HTTP 接口验证新交互流程。
+"""Full acceptance of the packaged EXE: verify the new interaction flow over real HTTP.
 
-覆盖：选卡 -> 加载规则 -> enable 开关 -> 手动同步 -> 去重 -> 页面保存 -> 无配置卡
+Covers: select card -> load rules -> enable flag -> manual sync -> dedup -> page save -> card without config
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "dist" / "D-Sync.exe"
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-PASS, FAIL = "  [通过]", "  [失败]"
+PASS, FAIL = "  [PASS]", "  [FAIL]"
 failures: list[str] = []
 
 
@@ -71,7 +71,7 @@ def make_card(root: Path, name: str, with_config: bool) -> Path:
 
 def main() -> int:
     if not EXE.exists():
-        print("EXE 不存在，先运行 scripts/build_exe.py")
+        print("EXE not found; run scripts/build_exe.py first")
         return 1
 
     workdir = Path(tempfile.mkdtemp(prefix="dsync_exe_"))
@@ -82,7 +82,7 @@ def main() -> int:
     env = dict(os.environ)
     env["SDSYNC_DATA_DIR"] = str(data_dir)
 
-    print("[0] 启动 EXE")
+    print("[0] Starting the EXE")
     proc = subprocess.Popen(
         [str(EXE), "--no-tray", "--no-browser", "--port", str(port)],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -97,54 +97,54 @@ def main() -> int:
                 break
             except Exception:
                 continue
-        check(ready, "EXE 启动且看板可访问")
+        check(ready, "EXE started and the dashboard is reachable")
         if not ready:
             return 1
 
-        print("\n[1] 页面结构")
+        print("\n[1] Page structure")
         with OPENER.open(base + "/", timeout=10) as resp:
             html = resp.read().decode("utf-8")
-        for label in ("设备状态", "选择设备", "立即同步", "自动同步",
-                      "同步进度", "本次同步耗时",
-                      "尚未创建配置文件", "运行日志", "历史记录"):
-            check(label in html, f"页面包含「{label}」")
-        check("全局状态" not in html, "全局状态区已移除")
-        check("存为模板" not in html, "本地模板入口已移除")
-        check(html.index("设备状态") < html.index("选择设备"),
-              "设备状态区在选择区之前")
-        check(html.index("选择设备") < html.index("运行日志"),
-              "选择区在日志之前")
-        check(html.index("运行日志") < html.index("历史记录"),
-              "日志在历史之前")
+        for label in ("section.devices", "section.selectDevice", "action.syncNow", "config.autoSync",
+                      "col.progress", "col.elapsed",
+                      "section.noConfig", "section.log", "section.history"):
+            check(label in html, f"page contains \"{label}\"")
+        check("section.global" not in html, "global status section removed")
+        check("action.saveTemplate" not in html, "local template entry removed")
+        check(html.index("section.devices") < html.index("section.selectDevice"),
+              "device status comes before the selection area")
+        check(html.index("section.selectDevice") < html.index("section.log"),
+              "selection area comes before the log")
+        check(html.index("section.log") < html.index("section.history"),
+              "log comes before history")
 
-        print("\n[2] 选择带配置的卡")
+        print("\n[2] Selecting a card with a config")
         card = make_card(workdir, "E", with_config=True)
         result = post(base, "select_card", {"path": str(card)})
-        check(result.get("has_config") is True, "识别到配置文件")
-        check(result.get("rules") == 2, f"读到 2 条规则（实际 {result.get('rules')}）")
+        check(result.get("has_config") is True, "config file recognised")
+        check(result.get("rules") == 2, f"read 2 rules (got {result.get('rules')})")
 
         state = api(base, "/api/state")
-        check(state["selected_card"] == str(card), "全局状态记录了选中卡")
+        check(state["selected_card"] == str(card), "global state recorded the selected card")
 
-        print("\n[3] 加载规则到编辑器")
+        print("\n[3] Loading the rules into the editor")
         cfg = post(base, "get_config", {"card_path": str(card)})
-        check(cfg.get("exists") is True, "配置文件存在")
-        check(len(cfg["model"]["rules"]) == 2, "编辑模型含 2 条规则")
-        check(cfg["model"]["enable"] is True, "编辑模型含 enable 字段")
+        check(cfg.get("exists") is True, "config file exists")
+        check(len(cfg["model"]["rules"]) == 2, "edit model has 2 rules")
+        check(cfg["model"]["enable"] is True, "edit model has the enable field")
 
-        print("\n[4] enable 开关")
+        print("\n[4] The enable flag")
         res = post(base, "set_enabled", {"path": str(card), "enable": False})
-        check(res.get("enable") is False, "开关写入成功")
+        check(res.get("enable") is False, "flag written successfully")
         text = (card / "dsync.yml").read_text(encoding="utf-8")
-        check("enable: false" in text, "YAML 已写入 enable: false")
+        check("enable: false" in text, "enable: false written to the YAML")
 
         reread = post(base, "get_config", {"card_path": str(card)})
-        check(reread["model"]["enable"] is False, "重新读取确认已持久化")
+        check(reread["model"]["enable"] is False, "re-read confirms persistence")
 
-        print("\n[5] enable=false 时手动同步仍应执行")
+        print("\n[5] A manual sync must still run when enable=false")
         out_dir = workdir / "OUT_E"
         res = post(base, "sync_now", {"path": str(card)})
-        check(res.get("started") is True, "手动同步已启动")
+        check(res.get("started") is True, "manual sync started")
         copied = 0
         for _ in range(50):
             time.sleep(0.4)
@@ -152,11 +152,11 @@ def main() -> int:
             if stats.get("total_files"):
                 copied = stats.get("copied_files", 0)
                 break
-        check(copied == 4, f"复制 4 个文件（实际 {copied}）")
-        check((out_dir / "Photos" / "100CANON").exists(), "照片落到 Photos 目录")
-        check((out_dir / "Docs" / "note.txt").exists(), "文档落到 Docs 目录")
+        check(copied == 4, f"copied 4 files (got {copied})")
+        check((out_dir / "Photos" / "100CANON").exists(), "photos landed in the Photos directory")
+        check((out_dir / "Docs" / "note.txt").exists(), "document landed in the Docs directory")
 
-        print("\n[6] 再次同步应全部跳过")
+        print("\n[6] A second sync should skip everything")
         post(base, "sync_now", {"path": str(card)})
         skipped = 0
         for _ in range(50):
@@ -165,9 +165,9 @@ def main() -> int:
             if stats.get("skipped_files") == 4:
                 skipped = stats["skipped_files"]
                 break
-        check(skipped == 4, f"重复文件全部跳过（实际 {skipped}）")
+        check(skipped == 4, f"all duplicate files skipped (got {skipped})")
 
-        print("\n[7] 页面保存规则")
+        print("\n[7] Saving rules from the page")
         model = {
             "version": 1,
             "enable": False,
@@ -181,24 +181,24 @@ def main() -> int:
         }
         res = post(base, "save_config",
                    {"model": model, "card_path": str(card)})
-        check(res.get("saved") is True, "保存成功")
+        check(res.get("saved") is True, "saved successfully")
         saved = (card / "dsync.yml").read_text(encoding="utf-8")
-        check("Pictures" in saved, "新目标路径已写入")
-        check("enable: false" in saved, "enable 已写入")
+        check("Pictures" in saved, "new destination written")
+        check("enable: false" in saved, "enable written")
 
         reread = post(base, "get_config", {"card_path": str(card)})
-        check(len(reread["model"]["rules"]) == 1, "重新读取只剩 1 条规则")
+        check(len(reread["model"]["rules"]) == 1, "re-read has exactly 1 rule")
 
-        print("\n[8] 选择没有配置的卡")
+        print("\n[8] Selecting a card without a config")
         empty = make_card(workdir, "F", with_config=False)
         result = post(base, "select_card", {"path": str(empty)})
-        check(result.get("has_config") is False, "识别为无配置")
-        check(result.get("selected") == str(empty), "已切换到该卡")
+        check(result.get("has_config") is False, "recognised as having no config")
+        check(result.get("selected") == str(empty), "switched to that card")
 
-        print("\n[9] 历史记录")
+        print("\n[9] History")
         state = api(base, "/api/state")
         check(len(state.get("history") or []) >= 2,
-              f"历史记录 {len(state.get('history') or [])} 条")
+              f"history has {len(state.get('history') or [])} entries")
 
     finally:
         proc.terminate()
@@ -210,11 +210,11 @@ def main() -> int:
 
     print("\n" + "=" * 56)
     if failures:
-        print(f"失败 {len(failures)} 项：")
+        print(f"{len(failures)} checks failed:")
         for item in failures:
             print(f"  - {item}")
         return 1
-    print("EXE 验收全部通过")
+    print("EXE acceptance passed")
     return 0
 
 

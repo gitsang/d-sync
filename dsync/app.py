@@ -1,8 +1,9 @@
-"""应用主控：串联设备检测、配置加载、同步引擎与 Web 看板。
+"""Application controller: wires together device detection, config loading, the
+sync engine and the web dashboard.
 
-职责划分：
-  * :class:`SyncApplication` 持有全局状态，向看板提供快照
-  * 设备插入 -> 读取 SD 卡根目录 YAML -> 执行同步 -> 记录历史
+Responsibilities:
+  * :class:`SyncApplication` holds the global state and serves snapshots to the dashboard
+  * device inserted -> read the YAML at the card root -> run the sync -> record history
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ APP_NAME = "D-Sync"
 
 
 class SyncApplication:
-    """同步守护程序主体。"""
+    """The sync daemon itself."""
 
     def __init__(
         self,
@@ -59,23 +60,24 @@ class SyncApplication:
         self._devices: dict[str, dict] = {}
         self._rules: list[dict] = []
         self._selected_card: str = ""
-        """页面上当前选中的设备路径（空串表示未选择）。"""
+        """The device path currently selected on the page (empty when nothing is selected)."""
         self._phase = "idle"
-        self._message = "等待设备插入…"
+        self._message = "Waiting for a device..."
         self._stats: dict | None = None
         self._current_file: str | None = None
         self._done_files = 0
         self._total_files = 0
         self._history: list[dict] = []
         self._pending_enable: dict[str, bool] = {}
-        """卡上还没有配置文件时，先记下用户设置的自动同步开关，创建配置时生效。"""
+        """When the card has no config file yet, remember the auto-sync toggle the user
+        sets and apply it once the config is created."""
         self._engine: SyncEngine | None = None
         self._syncing = False
         self._monitor: DeviceMonitor | None = None
         self._web: WebServer | None = None
         self._stop_event = threading.Event()
 
-    # ============================================================== 状态
+    # ============================================================== state
     def snapshot(self) -> dict:
         with self._lock:
             return {
@@ -101,9 +103,9 @@ class SyncApplication:
                 self._message = message
         self.bus.publish("state", state=self.snapshot())
 
-    # ============================================================== 设备
+    # ============================================================== devices
     def on_device_inserted(self, path: Path) -> None:
-        """检测到设备插入。"""
+        """A device was inserted."""
         key = str(path).upper().rstrip("\\")
         with self._lock:
             self._devices[key] = {
@@ -120,7 +122,7 @@ class SyncApplication:
                 "started_at": 0.0,
             }
         self.bus.publish("device", action="inserted", path=str(path),
-                         message=f"检测到设备插入：{volume_label(path)}（{path}）")
+                         message=f"Device inserted: {volume_label(path)} ({path})")
         self._handle_device(path)
 
     def on_device_removed(self, path: Path) -> None:
@@ -128,22 +130,24 @@ class SyncApplication:
         with self._lock:
             self._devices.pop(key, None)
         self.bus.publish("device", action="removed", path=str(path),
-                         message=f"检测到设备移除：{path}")
+                         message=f"Device removed: {path}")
 
     def _handle_device(self, path: Path) -> None:
-        """读取 SD 卡配置并按 enable 开关决定是否执行同步。
+        """Read the card's config and decide from the enable flag whether to sync.
 
-        配置来源只有一处：**SD 卡根目录的配置文件**。
-        卡上没有配置文件时不做任何同步，等待用户在页面上创建。
+        There is exactly one source of configuration: **the config file at the card
+        root**. When the card has no config file nothing is synced; the tool waits for
+        the user to create one on the page.
 
-        配置中 ``enable`` 为 False 时只加载规则，不自动同步 —— 需在页面手动点「立即同步」。
+        When ``enable`` is False the rules are only loaded and no automatic sync runs --
+        the user has to press "Sync now" on the page.
         """
         config_path = find_config_file(path, self.config_names)
         config: SyncConfig | None = None
         source_desc = ""
 
         if config_path is None:
-            logger.info("设备 %s 根目录未找到配置文件（%s），等待在页面创建",
+            logger.info("No config file at the root of device %s (%s); waiting for one to be created on the page",
                         path, ", ".join(self.config_names))
             with self._lock:
                 key = str(path).upper().rstrip("\\")
@@ -151,22 +155,22 @@ class SyncApplication:
                     self._devices[key]["state"] = "detected"
                     self._devices[key]["config"] = ""
             self.bus.publish("device", action="no-config", path=str(path),
-                             message=f"检测到 {path}，但卡上没有配置文件，等待在页面创建")
+                             message=f"Detected {path}, but the card has no config file; create one on the page")
             return
 
-        logger.info("在 %s 找到配置文件 %s", path, config_path.name)
+        logger.info("Found config file %s in %s", config_path.name, path)
         try:
             config = load_config_file(config_path, card_root=path)
             source_desc = config_path.name
         except ConfigError as exc:
-            logger.error("解析配置失败: %s", exc)
-            self.bus.publish("error", message=f"解析 {config_path.name} 失败：{exc}")
+            logger.error("Failed to parse the config: %s", exc)
+            self.bus.publish("error", message=f"Failed to parse {config_path.name}: {exc}")
             with self._lock:
                 key = str(path).upper().rstrip("\\")
                 if key in self._devices:
                     self._devices[key]["state"] = "error"
                     self._devices[key]["config"] = config_path.name
-            self._set_phase("error", f"配置解析失败：{exc}")
+            self._set_phase("error", f"Config parsing failed: {exc}")
             return
 
         with self._lock:
@@ -182,20 +186,20 @@ class SyncApplication:
             ]
 
         if not config.enabled:
-            logger.info("配置 %s 中 enable=false，仅加载规则不自动同步", source_desc)
+            logger.info("enable=false in config %s; loading rules without auto-sync", source_desc)
             self.bus.publish("device", action="config-loaded", path=str(path),
-                             message=f"已加载配置 {source_desc}（自动同步已关闭）")
-            self._set_phase("idle", f"已加载 {source_desc}，自动同步已关闭，可手动触发")
+                             message=f"Loaded config {source_desc} (auto-sync is off)")
+            self._set_phase("idle", f"Loaded {source_desc}; auto-sync is off, sync can be triggered manually")
             return
 
         self.bus.publish("device", action="config-loaded", path=str(path),
-                         message=f"已加载配置 {source_desc}（{len(config.rules)} 条规则）")
+                         message=f"Loaded config {source_desc} ({len(config.rules)} rules)")
 
         self.run_sync(path, config)
 
-    # ============================================================== 同步
+    # ============================================================== sync
     def run_sync(self, card_root: Path, config: SyncConfig) -> None:
-        """执行一次同步（同步执行于调用线程）。"""
+        """Run one sync (executed synchronously on the calling thread)."""
         key = str(card_root).upper().rstrip("\\")
         engine = SyncEngine(config, progress=self._make_progress(key))
         started = time.time()
@@ -242,15 +246,15 @@ class SyncApplication:
                 })
                 del self._history[:-100]
             self._set_phase("done",
-                            f"同步完成：复制 {stats.copied_files} 个，跳过 {stats.skipped_files} 个")
+                            f"Sync finished: {stats.copied_files} copied, {stats.skipped_files} skipped")
         except Exception as exc:
-            logger.exception("同步失败")
+            logger.exception("Sync failed")
             with self._lock:
                 if key in self._devices:
                     self._devices[key]["state"] = "error"
                     self._devices[key]["started_at"] = 0.0
-            self.bus.publish("error", message=f"同步失败：{exc}")
-            self._set_phase("error", f"同步失败：{exc}")
+            self.bus.publish("error", message=f"Sync failed: {exc}")
+            self._set_phase("error", f"Sync failed: {exc}")
         finally:
             with self._lock:
                 self._syncing = False
@@ -258,7 +262,7 @@ class SyncApplication:
                 self._current_file = None
 
     def _make_progress(self, device_key: str):
-        """为某个设备生成进度回调，把进度写进该设备自己的状态里。"""
+        """Build a progress callback for one device that writes progress into its own state."""
 
         def _progress(event: str, payload: dict) -> None:
             self._on_progress(event, payload, device_key)
@@ -266,7 +270,7 @@ class SyncApplication:
         return _progress
 
     def _on_progress(self, event: str, payload: dict, device_key: str = "") -> None:
-        """同步引擎进度回调 -> 更新设备状态并转发到事件总线。"""
+        """Sync engine progress callback -> update the device state and republish on the bus."""
         if event == "phase":
             phase = payload.get("phase", "copying")
             with self._lock:
@@ -323,9 +327,9 @@ class SyncApplication:
         elif event == "cancelled":
             self.bus.publish("cancelled", **payload)
 
-    # ============================================================== 操作
+    # ============================================================== actions
     def action_rescan(self, payload: dict) -> dict:
-        """重新扫描可移动设备。"""
+        """Rescan for removable devices."""
         found = list_removable_drives(include_fixed=self.include_fixed)
         with self._lock:
             known = set(self._devices)
@@ -336,7 +340,7 @@ class SyncApplication:
         return {"scanned": len(found)}
 
     def action_list_devices(self, payload: dict) -> dict:
-        """列出当前可用的外置设备（U 盘、读卡器等）。"""
+        """List the external devices currently available (USB sticks, card readers, ...)."""
         found = list_external_drives()
         with self._lock:
             known = set(self._devices)
@@ -351,7 +355,7 @@ class SyncApplication:
         return {"devices": devices}
 
     def action_open_folder(self, payload: dict) -> dict:
-        """用系统文件管理器打开配置根目录。"""
+        """Open the config root directory in the system file manager."""
         target = payload.get("path") or ""
         if not target:
             with self._lock:
@@ -377,10 +381,10 @@ class SyncApplication:
         return {"cancelled": False}
 
     def action_sync_now(self, payload: dict) -> dict:
-        """手动触发某个设备的同步。
+        """Manually trigger a sync for one device.
 
-        配置来源与自动同步一致：只认 SD 卡根目录的配置文件。
-        无论配置中的 ``enable`` 是否开启，手动点击始终会执行。
+        The config source is the same as for auto-sync: only the config file at the card
+        root is used. A manual click always runs, regardless of ``enable``.
         """
         path = payload.get("path")
         if not path:
@@ -388,22 +392,22 @@ class SyncApplication:
                 selected = self._selected_card
             path = selected or None
         if not path:
-            return {"error": "缺少 path 参数"}
+            return {"error": "Missing the path parameter"}
 
         root = Path(path)
         if not root.exists():
-            return {"error": f"路径不存在：{root}"}
+            return {"error": f"Path does not exist: {root}"}
 
         config_path = find_config_file(root, self.config_names)
         if config_path is None:
-            return {"error": f"{root} 中未找到配置文件，请先在页面上创建配置文件"}
+            return {"error": f"No config file found in {root}; create one on the page first"}
         try:
             config = load_config_file(config_path, card_root=root)
         except ConfigError as exc:
             return {"error": str(exc)}
 
         if not config.active_rules():
-            return {"error": "配置中没有启用的规则"}
+            return {"error": "The config has no enabled rules"}
 
         with self._lock:
             key = str(root).upper().rstrip("\\")
@@ -414,7 +418,7 @@ class SyncApplication:
         return {"started": True, "rules": len(config.active_rules())}
 
     def action_select_card(self, payload: dict) -> dict:
-        """页面选择某张 SD 卡：切换当前卡片并返回它的配置概况。"""
+        """Select a card on the page: switch the current card and return its config summary."""
         path = (payload.get("path") or "").strip()
         if not path:
             with self._lock:
@@ -430,7 +434,7 @@ class SyncApplication:
             with self._lock:
                 pending = self._pending_enable.get(str(root), True)
             self.bus.publish("device", action="selected", path=str(root),
-                             message=f"已选择 {root}，该卡尚无配置文件")
+                             message=f"Selected {root}; the card has no config file yet")
             return {"selected": str(root), "has_config": False, "source": "",
                     "enable": pending}
 
@@ -449,7 +453,7 @@ class SyncApplication:
             ]
 
         self.bus.publish("device", action="selected", path=str(root),
-                         message=f"已选择 {root}")
+                         message=f"Selected {root}")
         return {
             "selected": str(root),
             "has_config": True,
@@ -461,10 +465,10 @@ class SyncApplication:
         }
 
     def action_pick_path(self, payload: dict) -> dict:
-        """弹出系统原生窗口选择路径（源路径 / 目标路径）。
+        """Open a native path picker (source path / destination path).
 
-        对话框是模态阻塞的，放在独立线程里执行，
-        避免占住 HTTP 工作线程影响 SSE 推送。
+        The dialog is modal and blocks, so it runs on its own thread to avoid tying up
+        the HTTP worker thread and stalling SSE delivery.
         """
         kind = payload.get("kind") or "destination"
         card_path = payload.get("card_path") or ""
@@ -481,42 +485,43 @@ class SyncApplication:
                 outcome["result"] = pick_path_for_rule(
                     kind, card_path or None, current)
             except PickerUnavailable as exc:
-                outcome["error"] = f"无法打开选择窗口：{exc}。请直接手动输入路径。"
+                outcome["error"] = f"Could not open the picker: {exc}. Enter the path manually instead."
             except ValueError as exc:
                 outcome["error"] = str(exc)
             except Exception as exc:  # pragma: no cover
-                logger.exception("路径选择失败")
-                outcome["error"] = f"选择窗口异常：{exc}"
+                logger.exception("Path selection failed")
+                outcome["error"] = f"Path picker error: {exc}"
 
         thread = threading.Thread(target=_worker, name="path-picker", daemon=True)
         thread.start()
         thread.join(timeout=300)
 
         if thread.is_alive():
-            return {"error": "选择窗口超时未响应"}
+            return {"error": "The path picker timed out"}
         if "error" in outcome:
             return {"error": outcome["error"]}
         return outcome.get("result") or {"cancelled": True, "path": "", "absolute": ""}
 
     def action_set_enabled(self, payload: dict) -> dict:
-        """切换某张卡的自动同步开关（enable），并就地写回配置文件。"""
+        """Toggle a card's auto-sync flag (enable) and write it back to the config in place."""
         path = (payload.get("path") or "").strip()
         if not path:
             with self._lock:
                 path = self._selected_card
         if not path:
-            return {"error": "未指定 SD 卡路径"}
+            return {"error": "No SD card path given"}
 
         root = Path(path)
         enabled = bool(payload.get("enable", True))
 
         config_path = find_config_file(root, self.config_names)
         if config_path is None:
-            # 卡上还没有配置文件 —— 开关先记在内存里，创建配置文件时生效
+            # The card has no config file yet -- remember the toggle in memory and
+            # apply it when the config is created
             with self._lock:
                 self._pending_enable[str(root)] = enabled
             self.bus.publish("config", action="enabled", path=str(root),
-                             message=f"自动同步已{'开启' if enabled else '关闭'}（创建配置文件后生效）")
+                             message=f"Auto-sync {"enabled" if enabled else "disabled"} (takes effect once a config file exists)")
             return {"enable": enabled, "path": str(root), "pending": True}
 
         try:
@@ -529,7 +534,7 @@ class SyncApplication:
             text = editable_to_yaml_text(config_to_editable(config))
             config_path.write_text(text, encoding="utf-8")
         except OSError as exc:
-            return {"error": f"写入失败（SD 卡可能为只读）: {exc}"}
+            return {"error": f"Write failed (the SD card may be read-only): {exc}"}
 
         with self._lock:
             key = str(root).upper().rstrip("\\")
@@ -537,12 +542,13 @@ class SyncApplication:
                 self._devices[key]["enable"] = config.enabled
 
         self.bus.publish("config", action="enabled", path=str(config_path),
-                         message=f"自动同步已{'开启' if config.enabled else '关闭'}")
+                         message=f"Auto-sync {"enabled" if config.enabled else "disabled"}")
         return {"enable": config.enabled, "path": str(config_path)}
 
-    # ============================================================== 配置编辑
+    # ============================================================== config editing
     def _current_card(self) -> Path | None:
-        """返回当前应当编辑配置的设备（优先页面选中的卡，其次最近插入且带配置的盘）。"""
+        """Return the device whose config should be edited (the card selected on the page
+        first, otherwise the most recently inserted drive that has a config)."""
         with self._lock:
             if self._selected_card:
                 return Path(self._selected_card)
@@ -554,23 +560,23 @@ class SyncApplication:
         return None
 
     def action_get_config(self, payload: dict) -> dict:
-        """读取待编辑的配置（只有 SD 卡上的配置文件）。"""
+        """Load the config to be edited (only a config file on the card)."""
         card_path = payload.get("card_path") or ""
 
-        # SD 卡配置
+        # config on the SD card
         if card_path:
             root = Path(card_path)
         else:
             root = self._current_card()
         if root is None:
             return {"exists": False, "path": "", "model": self._blank_model(),
-                    "error": "未检测到 SD 卡"}
+                    "error": "No SD card detected"}
 
         config_path = find_config_file(root, self.config_names)
         if config_path is None:
             return {"exists": False, "path": str(root / self.config_names[0]),
                     "model": self._blank_model(), "card_root": str(root),
-                    "hint": "该 SD 卡尚无配置文件，可在此编辑后保存到卡片"}
+                    "hint": "This SD card has no config file yet; edit one here and save it to the card"}
 
         try:
             config = load_config_file(config_path, card_root=root)
@@ -582,7 +588,7 @@ class SyncApplication:
                 "model": config_to_editable(config), "card_root": str(root)}
 
     def _blank_model(self) -> dict:
-        """空白编辑模型 —— 不含任何预置规则，用户从零开始配置。"""
+        """A blank edit model -- no preset rules, the user starts from scratch."""
         return {
             "version": 1,
             "enable": True,
@@ -593,7 +599,7 @@ class SyncApplication:
         }
 
     def action_validate_config(self, payload: dict) -> dict:
-        """校验前端提交的编辑模型，不落盘。"""
+        """Validate the edit model submitted by the front end without writing it."""
         model = payload.get("model") or {}
         try:
             text = editable_to_yaml_text(model)
@@ -601,7 +607,7 @@ class SyncApplication:
         except ConfigError as exc:
             return {"valid": False, "error": str(exc)}
         except Exception as exc:
-            return {"valid": False, "error": f"配置无效: {exc}"}
+            return {"valid": False, "error": f"Invalid config: {exc}"}
 
         errors: list[str] = []
         card_path = payload.get("card_path") or ""
@@ -609,13 +615,13 @@ class SyncApplication:
         for rule in config.rules:
             error = validate_destination(str(config.resolve_destination(rule)), card_root)
             if error:
-                errors.append(f"规则「{rule.source}」：{error}")
+                errors.append(f"Rule \"{rule.source}\": {error}")
         if errors:
-            return {"valid": False, "error": "；".join(errors)}
+            return {"valid": False, "error": "; ".join(errors)}
         return {"valid": True, "rules": len(config.rules), "yaml": text}
 
     def action_save_config(self, payload: dict) -> dict:
-        """保存配置：写回 SD 卡的 YAML。"""
+        """Save the config: write the YAML back to the SD card."""
         model = payload.get("model") or {}
         card_path = payload.get("card_path") or ""
 
@@ -625,33 +631,33 @@ class SyncApplication:
         except ConfigError as exc:
             return {"saved": False, "error": str(exc)}
         except Exception as exc:
-            return {"saved": False, "error": f"配置无效: {exc}"}
+            return {"saved": False, "error": f"Invalid config: {exc}"}
 
-        # 目标路径合法性检查
+        # Validate the destination paths
         card_root = Path(card_path) if card_path else None
         errors: list[str] = []
         for rule in config.rules:
             error = validate_destination(str(config.resolve_destination(rule)), card_root)
             if error:
-                errors.append(f"规则「{rule.source}」：{error}")
+                errors.append(f"Rule \"{rule.source}\": {error}")
         if errors:
-            return {"saved": False, "error": "；".join(errors)}
+            return {"saved": False, "error": "; ".join(errors)}
 
         if card_root is None:
-            return {"saved": False, "error": "未指定 SD 卡路径"}
+            return {"saved": False, "error": "No SD card path given"}
 
         existing = find_config_file(card_root, self.config_names)
         path = existing or (card_root / self.config_names[0])
         try:
             path.write_text(text, encoding="utf-8")
         except OSError as exc:
-            return {"saved": False, "error": f"写入失败（SD 卡可能为只读）: {exc}"}
+            return {"saved": False, "error": f"Write failed (the SD card may be read-only): {exc}"}
 
-        logger.info("配置已保存到 %s（%d 条规则）", path, len(config.rules))
+        logger.info("Config saved to %s (%d rules)", path, len(config.rules))
         self.bus.publish("config", action="saved", path=str(path),
-                         message=f"配置已保存到 {path.name}（{len(config.rules)} 条规则）")
+                         message=f"Config saved to {path.name} ({len(config.rules)} rules)")
 
-        # 更新内存中的规则展示
+        # Refresh the in-memory rule view
         with self._lock:
             self._rules = [
                 {"source": rule.source, "destination": str(config.resolve_destination(rule)),
@@ -660,32 +666,33 @@ class SyncApplication:
             ]
             self._pending_enable.pop(str(card_root), None)
 
-        # 保存到 SD 卡后：enable 开启则立即重新同步，否则等用户手动触发
+        # After saving to the card: resync immediately when enable is on, otherwise wait
+        # for the user to trigger it
         if config.enabled and config.active_rules():
             threading.Thread(target=self.run_sync, args=(card_root, config),
                              name="config-save-sync", daemon=True).start()
         else:
-            reason = "自动同步已关闭" if not config.enabled else "没有启用的规则"
+            reason = "auto-sync is off" if not config.enabled else "no enabled rules"
             self.bus.publish("config", action="saved",
-                             message=f"配置已保存（{reason}），可点击「立即同步」执行")
-            self._set_phase("idle", f"配置已保存（{reason}）")
+                             message=f"Config saved ({reason}); press \"Sync now\" to run one")
+            self._set_phase("idle", f"Config saved ({reason})")
 
         return {"saved": True, "path": str(path), "rules": len(config.rules),
                 "enable": config.enabled}
 
     def action_delete_config(self, payload: dict) -> dict:
-        """删除 SD 卡上的配置文件。"""
+        """Delete the config file on the SD card."""
         card_path = payload.get("card_path") or ""
         if not card_path:
-            return {"deleted": False, "error": "未指定 SD 卡路径"}
+            return {"deleted": False, "error": "No SD card path given"}
         root = Path(card_path)
         config_path = find_config_file(root, self.config_names)
         if config_path is None:
-            return {"deleted": False, "error": "该 SD 卡上没有配置文件"}
+            return {"deleted": False, "error": "There is no config file on this SD card"}
         try:
             config_path.unlink()
         except OSError as exc:
-            return {"deleted": False, "error": f"删除失败: {exc}"}
+            return {"deleted": False, "error": f"Delete failed: {exc}"}
         with self._lock:
             key = str(root).upper().rstrip("\\")
             if key in self._devices:
@@ -693,11 +700,11 @@ class SyncApplication:
                 self._devices[key]["state"] = "detected"
             self._rules = []
         self.bus.publish("config", action="deleted", path=str(config_path),
-                         message=f"已删除 {config_path.name}")
+                         message=f"Deleted {config_path.name}")
         return {"deleted": True, "path": str(config_path)}
 
     def action_preview_config(self, payload: dict) -> dict:
-        """把当前配置转成 YAML 文本，供页面预览/复制。"""
+        """Render the current config as YAML text for preview/copy on the page."""
         result = self.action_get_config(payload)
         model = result.get("model") or self._blank_model()
         try:
@@ -706,7 +713,7 @@ class SyncApplication:
             return {"yaml": "", "error": str(exc)}
         return {"yaml": text, "path": result.get("path", "")}
 
-    # ============================================================== 生命周期
+    # ============================================================== lifecycle
     def start_web(self, host: str = "127.0.0.1", port: int = 8765) -> WebServer:
         actions = {
             "rescan": self.action_rescan,
@@ -725,7 +732,7 @@ class SyncApplication:
         }
         web_app = WebApp(self.bus, self.snapshot, actions, VERSION)
         if port == 0:
-            # 让系统直接分配一个空闲端口
+            # Let the OS pick a free port
             actual_port = 0
         else:
             try:

@@ -1,1 +1,1 @@
-"""Web 看板相关模块。"""
+"""Modules for the web dashboard."""

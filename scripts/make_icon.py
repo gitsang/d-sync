@@ -1,6 +1,6 @@
-"""生成应用图标（PNG + ICO），供 EXE 打包与托盘使用。
+"""Generate the app icons (PNG + ICO) used for EXE packaging and the tray.
 
-用法::
+Usage::
 
     python scripts/make_icon.py
 """
@@ -23,19 +23,19 @@ def draw(size: int):
     def s(value: float) -> int:
         return int(round(value * scale))
 
-    # 主体：圆角方形蓝色底
+    # body: rounded-square blue base
     draw.rounded_rectangle((s(4), s(10), s(60), s(56)), radius=s(12), fill=(47, 107, 255, 255))
-    # 高光
+    # highlight
     draw.rounded_rectangle((s(4), s(10), s(60), s(34)), radius=s(12), fill=(78, 133, 255, 255))
     draw.rectangle((s(4), s(24), s(60), s(34)), fill=(78, 133, 255, 255))
 
-    # SD 卡槽
+    # SD card slot
     draw.rounded_rectangle((s(16), s(20), s(48), s(30)), radius=s(3), fill=(255, 255, 255, 255))
     for index in range(4):
         x = s(19 + index * 6)
         draw.rectangle((x, s(22), x + s(4), s(28)), fill=(47, 107, 255, 255))
 
-    # 下箭头
+    # downward arrow
     draw.line((s(32), s(34), s(32), s(46)), fill=(255, 255, 255, 255), width=s(4))
     draw.polygon([(s(24), s(41)), (s(40), s(41)), (s(32), s(50))], fill=(255, 255, 255, 255))
 
@@ -50,12 +50,12 @@ def main() -> int:
     images[0].save(ASSETS / "dsync.png")
     images[-1].save(ASSETS / "dsync_256.png")
 
-    # ICO：取多个尺寸合成
+    # ICO: combine several sizes
     base = draw(256)
     base.save(ASSETS / "dsync.ico", format="ICO",
                sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
 
-    print(f"图标已生成: {ASSETS}")
+    print(f"Icons generated: {ASSETS}")
     for path in sorted(ASSETS.iterdir()):
         print(f"  {path.name}  ({path.stat().st_size / 1024:.1f} KB)")
     return 0

@@ -1,7 +1,7 @@
-"""线程安全的发布/订阅事件总线。
+"""Thread-safe publish/subscribe event bus.
 
-同步引擎、设备检测器、HTTP 服务之间通过它解耦：
-设备检测线程产生事件 -> 总线 -> Web 看板（SSE）与托盘订阅者。
+It decouples the sync engine, the device monitor and the HTTP server:
+the device monitor thread emits events -> bus -> web dashboard (SSE) and tray subscribers.
 """
 
 from __future__ import annotations
@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class EventBus:
-    """极简广播总线。每个订阅者拿到自己独立的队列，互不阻塞。"""
+    """Minimal broadcast bus. Every subscriber gets its own queue, so nobody blocks."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._subscribers: list[queue.Queue] = []
         self._seq = 0
 
-    # ------------------------------------------------------------------ 订阅
+    # -------------------------------------------------------------- subscribe
     def subscribe(self, maxsize: int = 1000) -> queue.Queue:
         q: queue.Queue = queue.Queue(maxsize=maxsize)
         with self._lock:
@@ -35,12 +35,13 @@ class EventBus:
             if q in self._subscribers:
                 self._subscribers.remove(q)
 
-    # ------------------------------------------------------------------ 发布
+    # ---------------------------------------------------------------- publish
     def publish(self, event_type: str, **payload: Any) -> dict:
-        """广播一个事件，返回带序号的完整事件字典。
+        """Broadcast an event and return the complete message including its sequence number.
 
-        ``event_type`` 是事件大类（device / phase / plan / file_start ...），
-        具体的子事件通过 ``**payload`` 附加，避免与形参名冲突。
+        ``event_type`` is the event category (device / phase / plan / file_start ...);
+        sub-event details are attached through ``**payload`` so they cannot clash
+        with parameter names.
         """
         with self._lock:
             self._seq += 1
@@ -50,17 +51,17 @@ class EventBus:
             try:
                 q.put_nowait(message)
             except queue.Full:
-                # 订阅者消费不过来时丢弃最老的一条，保证不阻塞发布方
+                # Drop the oldest event when a subscriber cannot keep up, so publishers never block.
                 try:
                     q.get_nowait()
                     q.put_nowait(message)
                 except (queue.Empty, queue.Full):
-                    logger.warning("事件队列已满，丢弃事件 %s", event_type)
+                    logger.warning("Event queue is full, dropping event %s", event_type)
         return message
 
 
 class EventBroadcaster:
-    """把总线事件转发给任意回调（用于托盘图标刷新、日志落盘等）。"""
+    """Forwards bus events to an arbitrary callback (tray refresh, file logging, ...)."""
 
     def __init__(self, bus: EventBus, callback: Callable[[dict], None]) -> None:
         self._bus = bus
@@ -78,8 +79,8 @@ class EventBroadcaster:
                 continue
             try:
                 self._callback(message)
-            except Exception:  # pragma: no cover - 回调异常不应影响主流程
-                logger.exception("事件回调执行失败")
+            except Exception:  # pragma: no cover - a callback error must not break the main flow
+                logger.exception("Event callback failed")
 
     def stop(self) -> None:
         self._stop.set()

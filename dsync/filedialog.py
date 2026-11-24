@@ -1,15 +1,16 @@
-"""Windows 原生「选择文件夹 / 选择文件」对话框。
+"""Native Windows "pick a folder / pick a file" dialogs.
 
-基于 COM 的 ``IFileDialog``（Windows Vista+），比 ``SHBrowseForFolder``
-的旧式树形窗口更接近现代资源管理器体验，并且支持指定初始目录。
+Built on the COM ``IFileDialog`` API (Windows Vista+), which is much closer to the
+modern Explorer experience than the old ``SHBrowseForFolder`` tree, and supports
+setting the initial directory.
 
-对外只暴露两个函数：
+Only two functions are exposed:
 
-* :func:`pick_folder` —— 选择文件夹
-* :func:`pick_file`   —— 选择单个文件
+* :func:`pick_folder` -- pick a folder
+* :func:`pick_file`   -- pick a single file
 
-两者在用户取消时返回 ``None``；在非 Windows 平台直接抛
-:class:`PickerUnavailable`，调用方应回退到手工输入路径。
+Both return ``None`` when the user cancels, and raise :class:`PickerUnavailable`
+on non-Windows platforms, where the caller should fall back to typing the path.
 """
 
 from __future__ import annotations
@@ -28,11 +29,11 @@ IS_WINDOWS = sys.platform == "win32"
 
 
 class PickerUnavailable(RuntimeError):
-    """当前环境无法弹出原生选择窗口。"""
+    """The native picker cannot be shown in this environment."""
 
 
 # ----------------------------------------------------------------------
-# COM 常量
+# COM constants
 # ----------------------------------------------------------------------
 CLSCTX_INPROC_SERVER = 0x1
 COINIT_APARTMENTTHREADED = 0x2
@@ -54,7 +55,7 @@ SIGDN_NORMALDISPLAY = 0x00000000
 
 HRESULT_OK = 0
 HRESULT_CANCELLED = -2147023673  # 0x800704C7 ERROR_CANCELLED
-RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 COM 已经以其它模型初始化
+RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 COM was already initialised with another model
 
 _CLSID_FILE_OPEN_DIALOG = "DC1C5A9B-E848-4B3A-A1B5-4ED1FD32689C"
 _IID_FILE_OPEN_DIALOG = "D57C7288-D4AD-4768-BE02-9D969532D960"
@@ -76,10 +77,10 @@ class _GUID(ctypes.Structure):
 
 
 # ----------------------------------------------------------------------
-# vtable 调用helper
+# vtable call helper
 # ----------------------------------------------------------------------
 def _vfunc(interface: int, index: int, restype, *argtypes):
-    """取 COM 接口 vtable 上的第 index 个方法。"""
+    """Fetch method number ``index`` from a COM interface vtable."""
     table = ctypes.cast(interface, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
     prototype = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
     return prototype(table[index])
@@ -90,16 +91,17 @@ def _com_available() -> bool:
         return False
     try:
         ctypes.windll.ole32  # noqa: B018
-    except Exception:  # pragma: no cover - 仅在异常系统上触发
+    except Exception:  # pragma: no cover - only triggered on unusual systems
         return False
     return True
 
 
 def _file_dialog_class_available() -> bool:
-    """检查 ``CLSID_FileOpenDialog`` 是否已注册。
+    """Check whether ``CLSID_FileOpenDialog`` is registered.
 
-    部分精简版 Windows / 容器环境没有注册这个 COM 类，
-    此时退回 :func:`_run_dialog_legacy`（纯 shell32 API，无需 COM 类）。
+    Some trimmed-down Windows builds and container images do not register this COM
+    class, in which case the code falls back to :func:`_run_dialog_legacy` (plain
+    shell32 API, no COM class required).
     """
     if not _com_available():
         return False
@@ -122,7 +124,7 @@ def _file_dialog_class_available() -> bool:
 
 
 def _init_com() -> bool:
-    """初始化当前线程的 COM，返回是否由本次调用完成初始化。"""
+    """Initialise COM for the current thread; returns whether this call did it."""
     ole32 = ctypes.windll.ole32
     ole32.CoInitializeEx.restype = ctypes.c_long
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
@@ -130,10 +132,10 @@ def _init_com() -> bool:
     if hr == HRESULT_OK:
         return True
     if hr == RPC_E_CHANGED_MODE:
-        # 线程已被其它模型初始化（如 MTA），仍可尝试调用
+        # The thread was already initialised with another model (e.g. MTA); still usable
         return False
     if hr == HRESULT_CANCELLED:
-        raise OSError("CoInitializeEx 失败")
+        raise OSError("CoInitializeEx failed")
     return False
 
 
@@ -141,11 +143,11 @@ def _release(interface: int) -> None:
     try:
         _vfunc(interface, 2, ctypes.c_ulong)()  # IUnknown::Release
     except Exception:  # pragma: no cover
-        logger.debug("释放 COM 对象失败", exc_info=True)
+        logger.debug("Failed to release the COM object", exc_info=True)
 
 
 def _shell_item_for_path(path: str) -> int:
-    """把路径转成 IShellItem，失败返回 0。"""
+    """Convert a path into an IShellItem; returns 0 on failure."""
     shell32 = ctypes.windll.shell32
     iid = _GUID.from_string(_IID_SHELL_ITEM)
     item = ctypes.c_void_p()
@@ -158,7 +160,7 @@ def _shell_item_for_path(path: str) -> int:
 
 
 def _item_display_path(item: int) -> str:
-    """从 IShellItem 取文件系统路径。"""
+    """Get the filesystem path out of an IShellItem."""
     ole32 = ctypes.windll.ole32
     fn = _vfunc(item, 5, ctypes.c_int, ctypes.c_uint, ctypes.POINTER(ctypes.c_wchar_p))
     buffer = ctypes.c_wchar_p()
@@ -176,9 +178,9 @@ def _item_display_path(item: int) -> str:
 
 def _run_dialog(initial_dir: str, folders_only: bool, file_filter: str | None,
                 title: str = "") -> str | None:
-    """核心对话框调用，返回选中路径；取消返回 None。"""
+    """The core dialog call: returns the chosen path, or None when cancelled."""
     if not _com_available():
-        raise PickerUnavailable("当前系统不支持原生选择窗口")
+        raise PickerUnavailable("This system does not support the native picker")
 
     ole32 = ctypes.windll.ole32
     shell32 = ctypes.windll.shell32
@@ -193,7 +195,7 @@ def _run_dialog(initial_dir: str, folders_only: bool, file_filter: str | None,
             ctypes.byref(iid), ctypes.byref(dialog),
         )
         if hr != HRESULT_OK or not dialog:
-            raise OSError(f"创建选择窗口失败 (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
+            raise OSError(f"Failed to create the picker (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
 
         options = (FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR
                    | FOS_NOVALIDATION | FOS_ALLNONSTORAGEITEMS)
@@ -211,10 +213,10 @@ def _run_dialog(initial_dir: str, folders_only: bool, file_filter: str | None,
             try:
                 _vfunc(dialog.value, 17, ctypes.c_int, ctypes.c_wchar_p)(
                     dialog.value, title)
-            except Exception:  # pragma: no cover - 标题失败不影响主流程
-                logger.debug("设置窗口标题失败", exc_info=True)
+            except Exception:  # pragma: no cover - a failed title must not break the flow
+                logger.debug("Failed to set the dialog title", exc_info=True)
 
-        # 设定初始目录
+        # set the initial directory
         start = initial_dir or ""
         if start and not os.path.isdir(start):
             start = os.path.dirname(start) or ""
@@ -233,7 +235,7 @@ def _run_dialog(initial_dir: str, folders_only: bool, file_filter: str | None,
         if hr == HRESULT_CANCELLED:
             return None
         if hr != HRESULT_OK:
-            raise OSError(f"选择窗口异常退出 (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
+            raise OSError(f"The picker exited unexpectedly (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
 
         # GetResult -> IShellItem
         result = ctypes.c_void_p()
@@ -256,21 +258,22 @@ def _run_dialog(initial_dir: str, folders_only: bool, file_filter: str | None,
 
 
 # ----------------------------------------------------------------------
-# 回退方案：SHBrowseForFolder
+# Fallback: SHBrowseForFolder
 # ----------------------------------------------------------------------
-# 这是一组纯 shell32 导出函数，不依赖 COM 类注册，
-# 在未注册 CLSID_FileOpenDialog 的精简系统上依然可用。
+# These are plain shell32 exports with no COM class registration requirement, so
+# they still work on trimmed-down systems where CLSID_FileOpenDialog is missing.
 BFFM_INITIALIZED = 1
 BFFM_SETSELECTIONW = 11
 
 BROWSEINFOF_NONE = 0x00
 BROWSEINFOF_NEWDIALOGSTYLE = 0x40
 
-# SHBrowseForFolder 回调原型：int CALLBACK (HWND, UINT, LPARAM, LPARAM)
-# 注意 HWND 与 LPARAM 在 64 位下都是 64 位，必须显式用 c_ssize_t / c_void_p，
-# 否则 ctypes 默认按 32 位 int 传参，回调里取到的指针会被截断。
+# SHBrowseForFolder callback prototype: int CALLBACK (HWND, UINT, LPARAM, LPARAM)
+# Note that HWND and LPARAM are both 64-bit on 64-bit Windows and must be declared
+# as c_ssize_t / c_void_p; otherwise ctypes passes them as 32-bit ints and the
+# pointers the callback receives are truncated.
 _BFFMProc = ctypes.WINFUNCTYPE(
-    ctypes.c_int,          # 返回值 int
+    ctypes.c_int,          # return value: int
     ctypes.c_void_p,       # HWND hwnd
     ctypes.c_uint,         # UINT uMsg
     ctypes.c_ssize_t,      # LPARAM lParam
@@ -279,7 +282,7 @@ _BFFMProc = ctypes.WINFUNCTYPE(
 
 
 class BROWSEINFO(ctypes.Structure):
-    """``SHBrowseForFolder`` 的参数结构。"""
+    """The ``SHBrowseForFolder`` parameter structure."""
 
     _fields_ = [
         ("hwndOwner", wintypes.HWND),
@@ -294,20 +297,21 @@ class BROWSEINFO(ctypes.Structure):
 
 
 def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
-    """用 ``SHBrowseForFolder`` 打开「浏览文件夹」窗口。
+    """Open the "browse for folder" dialog via ``SHBrowseForFolder``.
 
-    这是纯 shell32 导出函数调用，不依赖 COM 类注册，
-    可在未安装 ``CLSID_FileOpenDialog`` 的系统上正常工作。
+    This is a plain shell32 export call with no COM class registration requirement,
+    so it works on systems without ``CLSID_FileOpenDialog``.
     """
-    # 用 WinDLL 而非 windll：windll 的函数对象是全局共享缓存，
-    # 其它模块若给同名函数设了不同 argtypes 会互相干扰。
+    # Use WinDLL rather than windll: windll caches function objects globally, so
+    # another module setting different argtypes for the same name would interfere.
     shell32 = ctypes.WinDLL("shell32")
     user32 = ctypes.WinDLL("user32")
 
-    # 显式声明原型：
-    #  * SendMessageW 的 lParam 是指针，不声明时按 int 传会截断
-    #  * SHBrowseForFolderW 返回的 PIDL 是指针，restype 必须是 c_void_p，
-    #    否则 64 位下指针被截断成 int，后续 SHGetPathFromIDListW 读越界崩溃
+    # Declare the prototypes explicitly:
+    #  * SendMessageW's lParam is a pointer; without a declaration it is passed as int and truncated
+    #  * the PIDL returned by SHBrowseForFolderW is a pointer, so restype must be
+    #    c_void_p; otherwise it is truncated to int on 64-bit and the following
+    #    SHGetPathFromIDListW reads out of bounds and crashes
     user32.SendMessageW.restype = ctypes.c_long
     user32.SendMessageW.argtypes = [
         ctypes.c_void_p, ctypes.c_uint, ctypes.c_long, ctypes.c_void_p,
@@ -327,7 +331,7 @@ def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
     info.hwndOwner = None
     info.pidlRoot = None
     info.pszDisplayName = ctypes.cast(buffer, ctypes.c_wchar_p)
-    info.lpszTitle = title or "选择文件夹"
+    info.lpszTitle = title or "Select a folder"
     info.ulFlags = BROWSEINFOF_NEWDIALOGSTYLE | BROWSEINFOF_NONE
 
     start = initial_dir or ""
@@ -337,13 +341,13 @@ def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
     def _callback(hwnd, msg, param, data):
         try:
             if msg == BFFM_INITIALIZED and start:
-                # 把对话框定位到期望的初始目录
+                # point the dialog at the desired initial directory
                 user32.SendMessageW(
                     hwnd, BFFM_SETSELECTIONW, 0,
                     ctypes.cast(ctypes.c_wchar_p(start), ctypes.c_void_p),
                 )
         except Exception:  # pragma: no cover
-            logger.debug("设置初始目录失败", exc_info=True)
+            logger.debug("Failed to set the initial directory", exc_info=True)
         return 0
 
     proc = _BFFMProc(_callback)
@@ -352,14 +356,14 @@ def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
     pidl = shell32.SHBrowseForFolderW(
         ctypes.pointer(info), None, 0, info.lpszTitle, None, 0)
     if not pidl:
-        # 用户取消，或窗口未能打开
+        # The user cancelled, or the dialog could not open
         return None
 
     try:
         path_buffer = ctypes.create_unicode_buffer(260)
         ok = shell32.SHGetPathFromIDListW(pidl, path_buffer, 260)
         if ok and path_buffer.value:
-            logger.info("用户选择目录: %s", path_buffer.value)
+            logger.info("User selected folder: %s", path_buffer.value)
             return path_buffer.value
         return None
     finally:
@@ -373,7 +377,7 @@ def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
 
 
 class OPENFILENAME(ctypes.Structure):
-    """``GetOpenFileName`` 的参数结构。"""
+    """The ``GetOpenFileName`` parameter structure."""
 
     _fields_ = [
         ("lStructSize", wintypes.DWORD),
@@ -404,18 +408,18 @@ class OPENFILENAME(ctypes.Structure):
 
 def _run_file_dialog_legacy(initial_dir: str, file_filter: str,
                              title: str) -> str | None:
-    """用 ``GetOpenFileName`` 打开「选择文件」窗口。"""
+    """Open the "select file" dialog via ``GetOpenFileName``."""
     comdlg32 = ctypes.windll.comdlg32
 
     buffer = ctypes.create_unicode_buffer(1024)
     info = OPENFILENAME()
     info.lStructSize = ctypes.sizeof(OPENFILENAME)
     info.hwndOwner = None
-    info.lpstrFilter = file_filter or "所有文件 (*.*)|*.*"
+    info.lpstrFilter = file_filter or "All files (*.*)|*.*"
     info.nFilterIndex = 1
     info.lpstrFile = ctypes.cast(buffer, ctypes.c_wchar_p)
     info.nMaxFile = 1024
-    info.lpstrTitle = title or "选择文件"
+    info.lpstrTitle = title or "Select a file"
 
     start = initial_dir or ""
     if start and not os.path.isdir(start):
@@ -430,10 +434,11 @@ def _run_file_dialog_legacy(initial_dir: str, file_filter: str,
 
 
 # ----------------------------------------------------------------------
-# 对外接口
+# Public API
 # ----------------------------------------------------------------------
 def pick_folder(initial_dir: str | Path | None = None, title: str = "") -> str | None:
-    """弹出「选择文件夹」窗口，返回选中目录；用户取消返回 ``None``。"""
+    """Show the "select folder" dialog and return the chosen directory, or ``None``
+    when the user cancels."""
     start = str(initial_dir) if initial_dir else ""
     if start and not os.path.isdir(start):
         start = os.path.dirname(start) or ""
@@ -441,18 +446,19 @@ def pick_folder(initial_dir: str | Path | None = None, title: str = "") -> str |
     if _file_dialog_class_available():
         result = _run_dialog(start, folders_only=True, file_filter=None, title=title)
     else:
-        logger.info("CLSID_FileOpenDialog 未注册，改用 SHBrowseForFolder")
-        result = _run_dialog_legacy(start, title or "选择文件夹")
+        logger.info("CLSID_FileOpenDialog is not registered; falling back to SHBrowseForFolder")
+        result = _run_dialog_legacy(start, title or "Select a folder")
 
     if result:
-        logger.info("用户选择目录: %s", result)
+        logger.info("User selected folder: %s", result)
     return result or None
 
 
 def pick_file(initial_dir: str | Path | None = None,
-              file_filter: str = "所有文件 (*.*)|*.*",
+              file_filter: str = "All files (*.*)|*.*",
               title: str = "") -> str | None:
-    """弹出「选择文件」窗口，返回选中文件；用户取消返回 ``None``。"""
+    """Show the "select file" dialog and return the chosen file, or ``None`` when the
+    user cancels."""
     start = str(initial_dir) if initial_dir else ""
     if start and not os.path.isdir(start):
         start = os.path.dirname(start) or ""
@@ -461,36 +467,37 @@ def pick_file(initial_dir: str | Path | None = None,
         result = _run_dialog(start, folders_only=False, file_filter=file_filter,
                              title=title)
     else:
-        logger.info("CLSID_FileOpenDialog 未注册，改用 GetOpenFileName")
-        result = _run_file_dialog_legacy(start, file_filter, title or "选择文件")
+        logger.info("CLSID_FileOpenDialog is not registered; falling back to GetOpenFileName")
+        result = _run_file_dialog_legacy(start, file_filter, title or "Select a file")
 
     if result:
-        logger.info("用户选择文件: %s", result)
+        logger.info("User selected file: %s", result)
     return result or None
 
 
 def pick_path_for_rule(kind: str, card_root: str | Path | None,
                        current: str = "") -> dict:
-    """为规则编辑器的路径输入框选择路径。
+    """Pick a path for a rule editor's path input.
 
-    ``kind`` 取值：
+    ``kind`` is one of:
 
-    * ``source`` —— 在 SD 卡内浏览，选中后换算成相对卡根目录的路径
-    * ``destination`` —— 浏览本机任意目录，返回绝对路径
+    * ``source`` -- browse inside the SD card and convert the choice into a path
+      relative to the card root
+    * ``destination`` -- browse any local directory and return an absolute path
 
-    返回字典：``{"path": ..., "absolute": ..., "cancelled": bool}``。
+    Returns a dict: ``{"path": ..., "absolute": ..., "cancelled": bool}``.
     """
     card = Path(card_root) if card_root else None
     current_text = (current or "").strip()
 
     if kind == "source":
-        # 源路径在 SD 卡内：优先从当前填写的相对路径定位起始目录
+        # Source path inside the SD card: start from the currently entered relative path
         start = str(card) if card else ""
         if card and current_text:
             candidate = card / current_text
             if candidate.is_dir():
                 start = str(candidate)
-        chosen = pick_folder(start, title="选择 SD 卡内的源文件夹")
+        chosen = pick_folder(start, title="Select a source folder on the SD card")
         if not chosen:
             return {"cancelled": True, "path": "", "absolute": ""}
         if card:
@@ -501,7 +508,7 @@ def pick_path_for_rule(kind: str, card_root: str | Path | None,
             if relative == ".":
                 relative = ""
             if relative.startswith(".."):
-                raise ValueError("源路径必须位于 SD 卡内部")
+                raise ValueError("The source path must be inside the SD card")
             return {
                 "cancelled": False,
                 "path": relative,
@@ -513,7 +520,7 @@ def pick_path_for_rule(kind: str, card_root: str | Path | None,
     start = current_text
     if start and not os.path.isdir(start):
         start = os.path.dirname(start) or ""
-    chosen = pick_folder(start, title="选择目标文件夹")
+    chosen = pick_folder(start, title="Select the destination folder")
     if not chosen:
         return {"cancelled": True, "path": "", "absolute": ""}
     return {"cancelled": False, "path": chosen, "absolute": chosen}

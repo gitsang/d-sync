@@ -1,10 +1,11 @@
-"""Windows 系统托盘图标。
+"""Windows system tray icon.
 
-后台运行时，程序只以托盘图标形式存在：
-  * 左键/双击 -> 打开看板页面
-  * 右键菜单 -> 打开看板 / 立即扫描 / 取消同步 / 退出
+While running in the background the program exists only as a tray icon:
+  * left-click / double-click -> open the dashboard page
+  * right-click menu -> open dashboard / rescan now / cancel sync / quit
 
-若 pystray 不可用（例如无图形环境），自动降级为纯控制台模式。
+When pystray is unavailable (e.g. no graphical environment) it degrades
+gracefully to plain console mode.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _make_icon_image():
-    """用 Pillow 动态绘制托盘图标，避免依赖外部图片文件。"""
+    """Draw the tray icon with Pillow so no external image file is needed."""
     try:
         from PIL import Image, ImageDraw
     except ImportError:  # pragma: no cover
@@ -35,7 +36,7 @@ def _make_icon_image():
 
 
 class TrayIcon:
-    """托盘图标封装。"""
+    """Tray icon wrapper."""
 
     def __init__(
         self,
@@ -43,7 +44,7 @@ class TrayIcon:
         on_rescan: Callable[[], None],
         on_cancel: Callable[[], None],
         on_quit: Callable[[], None],
-        title: str = "D-Sync 同步服务",
+        title: str = "D-Sync Sync Service",
     ) -> None:
         self.on_open = on_open
         self.on_rescan = on_rescan
@@ -61,17 +62,18 @@ class TrayIcon:
             return False
 
     def start(self) -> bool:
-        """启动托盘图标。返回 False 表示不可用（调用方应降级）。"""
+        """Start the tray icon. Returning False means it is unavailable (the caller
+        should degrade gracefully)."""
         try:
             import pystray
             from pystray import Menu, MenuItem
         except ImportError:
-            logger.info("未安装 pystray，跳过托盘图标")
+            logger.info("pystray is not installed; skipping the tray icon")
             return False
 
         image = _make_icon_image()
         if image is None:
-            logger.info("缺少 Pillow，跳过托盘图标")
+            logger.info("Pillow is missing; skipping the tray icon")
             return False
 
         def _open(icon, item):
@@ -88,32 +90,32 @@ class TrayIcon:
             icon.stop()
 
         menu = Menu(
-            MenuItem("打开看板", _open, default=True),
-            MenuItem("立即扫描设备", _rescan),
-            MenuItem("取消当前同步", _cancel),
+            MenuItem("Open dashboard", _open, default=True),
+            MenuItem("Rescan devices now", _rescan),
+            MenuItem("Cancel current sync", _cancel),
             Menu.SEPARATOR,
-            MenuItem("退出", _quit),
+            MenuItem("Quit", _quit),
         )
 
         try:
             self._icon = pystray.Icon("dsync", image, self.title, menu)
         except Exception as exc:  # pragma: no cover
-            logger.warning("创建托盘图标失败: %s", exc)
+            logger.warning("Failed to create the tray icon: %s", exc)
             return False
 
         self._thread = threading.Thread(target=self._icon.run, name="tray-icon", daemon=True)
         self._thread.start()
-        logger.info("托盘图标已启动")
+        logger.info("Tray icon started")
         return True
 
     def notify(self, message: str, title: str | None = None) -> None:
-        """弹出气泡通知（失败不影响主流程）。"""
+        """Show a balloon notification (failure does not affect the main flow)."""
         if not self._icon:
             return
         try:
             self._icon.notify(message, title or self.title)
         except Exception:  # pragma: no cover
-            logger.debug("通知失败", exc_info=True)
+            logger.debug("Notification failed", exc_info=True)
 
     def stop(self) -> None:
         if self._icon:
@@ -124,8 +126,8 @@ class TrayIcon:
 
 
 def open_url(url: str) -> None:
-    """在默认浏览器中打开地址。"""
+    """Open the URL in the default browser."""
     try:
         webbrowser.open(url)
     except Exception:  # pragma: no cover
-        logger.exception("打开浏览器失败: %s", url)
+        logger.exception("Failed to open the browser: %s", url)

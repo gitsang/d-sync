@@ -1,15 +1,18 @@
-"""Windows SD 卡 / 可移动设备检测。
+"""Windows SD card / removable device detection.
 
-两条检测路径并行工作，互为冗余：
+Two detection paths run in parallel and back each other up:
 
-1. ``WM_DEVICECHANGE`` 消息监听 —— 插拔的瞬间立刻收到通知，响应最快。
-   通过 ctypes 注册一个隐藏窗口，监听 ``DBT_DEVICEARRIVAL`` / 
-   ``DBT_DEVICEREMOVECOMPLETE``，收到后立即触发一次重新扫描。
+1. ``WM_DEVICECHANGE`` message listener — get notified the instant a device is
+   plugged in or out, which is the fastest response. It registers a hidden
+   window through ctypes and listens for ``DBT_DEVICEARRIVAL`` /
+   ``DBT_DEVICEREMOVECOMPLETE``, triggering a rescan right away.
 
-2. 轮询扫描 —— 每隔若干秒枚举一次逻辑盘。相比事件方式，它能兜住
-   休眠唤醒、驱动异常、虚拟机挂载等事件丢失的情况。
+2. Polling scan — enumerate logical drives every few seconds. Compared with the
+   event path it also covers lost events: resume from sleep, driver glitches,
+   VM-mounted volumes and so on.
 
-只有「盘符下存在配置 YAML 文件」的盘才会被认定为有效的 SD 卡。
+A drive only counts as a valid SD card when a YAML config file exists in its
+root directory.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from typing import Callable, Iterable
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
-# Win32 常量
+# Win32 constants
 # ----------------------------------------------------------------------
 DRIVE_REMOVABLE = 2
 DRIVE_FIXED = 3
@@ -43,14 +46,14 @@ WM_CLOSE = 0x0010
 DRIVE_REMOVABLE_TYPES = (DRIVE_REMOVABLE, DRIVE_CDROM, DRIVE_RAMDISK)
 
 EXTERNAL_DRIVE_TYPES = (DRIVE_REMOVABLE,)
-"""外置设备类型（U 盘 / 读卡器）。光驱与内存盘不计入。"""
+"""External device types (USB sticks / card readers). Optical and RAM disks are not included."""
 
 
 def _enum_drives() -> list[str]:
-    """返回所有存在的盘符列表（形如 'E:\\'）。"""
+    """Return every existing drive letter (formatted like 'E:\\')."""
     try:
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
-    except (AttributeError, OSError):  # pragma: no cover - 非 Windows 环境
+    except (AttributeError, OSError):  # pragma: no cover - non-Windows environments
         return []
     drives: list[str] = []
     for index in range(26):
@@ -67,7 +70,7 @@ def _drive_type(root: str) -> int:
 
 
 def volume_label(path: Path | str) -> str:
-    """读取卷标（设备名）。读不到时回退为盘符。"""
+    """Read the volume label (device name). Falls back to the drive letter."""
     root = str(path)
     if not root.endswith("\\"):
         root += "\\"
@@ -92,7 +95,7 @@ def volume_label(path: Path | str) -> str:
 
 
 def is_external(path: Path | str) -> bool:
-    """判断是否为外置设备（U 盘 / 读卡器）。固定磁盘、光驱、内存盘都不算。"""
+    """Return whether this is an external device (USB stick / card reader). Fixed, optical and RAM disks do not count."""
     root = str(path)
     if not root.endswith("\\"):
         root += "\\"
@@ -100,7 +103,7 @@ def is_external(path: Path | str) -> bool:
 
 
 def list_external_drives() -> list[Path]:
-    """列出外置设备（U 盘、读卡器等）。"""
+    """List external devices (USB sticks, card readers, ...)."""
     result: list[Path] = []
     for root in _enum_drives():
         if _drive_type(root) not in EXTERNAL_DRIVE_TYPES:
@@ -114,10 +117,10 @@ def list_external_drives() -> list[Path]:
 
 
 def list_removable_drives(include_fixed: bool = False) -> list[Path]:
-    """列出可移动磁盘（读卡器、U 盘、光驱等）。
+    """List removable drives (card readers, USB sticks, optical drives, ...).
 
-    部分读卡器会把 SD 卡挂载成"固定磁盘"，此时可通过
-    ``include_fixed=True`` 一并纳入候选。
+    Some card readers mount the SD card as a "fixed disk"; pass
+    ``include_fixed=True`` to include those as candidates too.
     """
     result: list[Path] = []
     for root in _enum_drives():
@@ -132,7 +135,7 @@ def list_removable_drives(include_fixed: bool = False) -> list[Path]:
 
 
 def list_all_drives() -> list[Path]:
-    """列出所有可访问的盘符。"""
+    """List every accessible drive letter."""
     result: list[Path] = []
     for root in _enum_drives():
         try:
@@ -144,7 +147,7 @@ def list_all_drives() -> list[Path]:
 
 
 def is_removable(path: Path) -> bool:
-    """判断某个盘是否为可移动设备。"""
+    """Return whether a drive is removable."""
     root = str(path)
     if not root.endswith("\\"):
         root += "\\"
@@ -152,7 +155,7 @@ def is_removable(path: Path) -> bool:
 
 
 # ----------------------------------------------------------------------
-# Win32 回调类型
+# Win32 callback types
 # ----------------------------------------------------------------------
 WNDPROC = ctypes.WINFUNCTYPE(
     ctypes.c_long,
@@ -161,7 +164,7 @@ WNDPROC = ctypes.WINFUNCTYPE(
 
 
 class WndClass(ctypes.Structure):
-    """WNDCLASS 结构体。"""
+    """The WNDCLASS structure."""
 
     _fields_ = [
         ("style", wintypes.UINT),
@@ -178,9 +181,9 @@ class WndClass(ctypes.Structure):
 
 
 class DeviceChangeListener:
-    """在独立线程中运行一个隐藏窗口，监听 WM_DEVICECHANGE。
+    """Run a hidden window in its own thread and listen for WM_DEVICECHANGE.
 
-    仅在 Windows 上有效；其它平台会安全降级（线程直接退出）。
+    Only effective on Windows; other platforms degrade safely (the thread just exits).
     """
 
     def __init__(self, on_change: Callable[[], None]) -> None:
@@ -194,7 +197,7 @@ class DeviceChangeListener:
 
     def start(self) -> None:
         if os.name != "nt":
-            logger.info("非 Windows 平台，跳过 WM_DEVICECHANGE 监听")
+            logger.info("Not running on Windows, skipping the WM_DEVICECHANGE listener")
             return
         self._thread = threading.Thread(target=self._run, name="devchange-listener", daemon=True)
         self._thread.start()
@@ -216,7 +219,7 @@ class DeviceChangeListener:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
 
-        # 显式声明原型，避免 64 位下指针被截断
+        # Declare prototypes explicitly so pointers are not truncated on 64-bit builds
         user32.DefWindowProcW.argtypes = [
             wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
         ]
@@ -237,7 +240,7 @@ class DeviceChangeListener:
                     try:
                         self._on_change()
                     except Exception:  # pragma: no cover
-                        logger.exception("设备变更回调失败")
+                        logger.exception("Device change callback failed")
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._wndproc = WNDPROC(_wndproc)
@@ -250,7 +253,7 @@ class DeviceChangeListener:
         wndclass.lpszClassName = class_name
 
         if not user32.RegisterClassW(ctypes.byref(wndclass)):
-            logger.debug("RegisterClassW 失败: %s", ctypes.get_last_error())
+            logger.debug("RegisterClassW failed: %s", ctypes.get_last_error())
             self._ready.set()
             return
 
@@ -260,7 +263,7 @@ class DeviceChangeListener:
             hinstance, None,
         )
         if not hwnd:
-            logger.debug("CreateWindowExW 失败: %s", ctypes.get_last_error())
+            logger.debug("CreateWindowExW failed: %s", ctypes.get_last_error())
             self._ready.set()
             return
 
@@ -277,10 +280,10 @@ class DeviceChangeListener:
             user32.DispatchMessageW(ctypes.byref(msg))
 
 # ----------------------------------------------------------------------
-# 监控器
+# Monitor
 # ----------------------------------------------------------------------
 class DeviceMonitor:
-    """组合事件监听与轮询，产出盘符的插入/移除事件。"""
+    """Combine the event listener and polling into drive insert/remove events."""
 
     def __init__(
         self,
@@ -305,7 +308,7 @@ class DeviceMonitor:
     def start(self) -> None:
         self._listener.start()
         self._known = self._current_drives()
-        logger.info("已识别当前磁盘: %s", ", ".join(sorted(self._known)) or "无")
+        logger.info("Detected drives: %s", ", ".join(sorted(self._known)) or "none")
         self._thread = threading.Thread(target=self._loop, name="device-monitor", daemon=True)
         self._thread.start()
 
@@ -316,11 +319,11 @@ class DeviceMonitor:
             self._thread.join(timeout=5.0)
 
     def _trigger_scan(self) -> None:
-        """事件驱动：立刻做一次扫描（不阻塞消息线程太久）。"""
+        """Event driven: scan immediately (without blocking the message thread for long)."""
         try:
             self._scan()
         except Exception:  # pragma: no cover
-            logger.exception("事件触发扫描失败")
+            logger.exception("Event-triggered scan failed")
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -330,7 +333,7 @@ class DeviceMonitor:
             try:
                 self._scan()
             except Exception:  # pragma: no cover
-                logger.exception("轮询扫描失败")
+                logger.exception("Polling scan failed")
 
     # ------------------------------------------------------------------
     def _current_drives(self) -> dict[str, Path]:
@@ -351,16 +354,16 @@ class DeviceMonitor:
 
         for key, path in current.items():
             if key not in previous:
-                logger.info("检测到设备插入: %s", path)
+                logger.info("Device inserted: %s", path)
                 try:
                     self._on_inserted(path)
                 except Exception:  # pragma: no cover
-                    logger.exception("处理设备插入失败")
+                    logger.exception("Failed to handle device insertion")
 
         for key, path in previous.items():
             if key not in current:
-                logger.info("检测到设备移除: %s", path)
+                logger.info("Device removed: %s", path)
                 try:
                     self._on_removed(path)
                 except Exception:  # pragma: no cover
-                    logger.exception("处理设备移除失败")
+                    logger.exception("Failed to handle device removal")

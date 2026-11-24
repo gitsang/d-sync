@@ -1,4 +1,4 @@
-"""日志配置：同时输出到滚动文件与控制台。"""
+"""Logging setup: write to a rotating file and the console at the same time."""
 
 from __future__ import annotations
 
@@ -12,9 +12,10 @@ _CONFIGURED = False
 
 
 def app_data_dir() -> Path:
-    """返回应用数据目录（Windows: %LOCALAPPDATA%\\D-Sync）。
+    """Return the application data directory (Windows: %LOCALAPPDATA%\\D-Sync).
 
-    可用环境变量 ``SDSYNC_DATA_DIR`` 覆盖（测试与便携模式用）。
+    Override it with the ``SDSYNC_DATA_DIR`` environment variable (used by tests
+    and portable setups).
     """
     override = os.environ.get("SDSYNC_DATA_DIR")
     if override:
@@ -36,7 +37,7 @@ def log_dir() -> Path:
 
 
 def setup_logging(verbose: bool = False, console: bool = True) -> None:
-    """初始化根日志。重复调用不会叠加 handler。"""
+    """Initialise the root logger. Repeated calls do not stack handlers."""
     global _CONFIGURED
     if _CONFIGURED:
         return
@@ -67,7 +68,7 @@ def setup_logging(verbose: bool = False, console: bool = True) -> None:
         stream.setLevel(logging.DEBUG if verbose else logging.INFO)
         root.addHandler(stream)
 
-    # 第三方库降噪
+    # Quiet down third-party libraries
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     _CONFIGURED = True

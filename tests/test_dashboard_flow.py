@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from dsync.app import SyncApplication  # noqa: E402
 from dsync.config import parse_config  # noqa: E402
+from dsync.devices import device_key  # noqa: E402
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -456,7 +457,7 @@ def test_sync_now_records_started_at(tmp_path, monkeypatch):
     app = SyncApplication()
     card = _make_card(tmp_path, with_config=True)
     app.on_device_inserted(card)
-    key = str(card).upper().rstrip("\\")
+    key = device_key(card)
     assert key in app._devices
     assert "started_at" in app._devices[key]
 

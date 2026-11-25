@@ -1,6 +1,6 @@
 # D-Sync · External Device Auto-Sync Daemon
 
-A resident Windows app. **Detect an external device (USB stick / card reader) → read the YAML config at the card root → copy files to the destination per the config → skip duplicates automatically**, with progress shown live on a local dashboard.
+A resident app for **Windows and Linux**. **Detect an external device (USB stick / card reader / SD card) → read the config at the card root → copy files to the destination per the config → skip duplicates automatically**, with progress shown live on a local dashboard.
 
 English | [中文](README.zh_cn.md)
 
@@ -10,16 +10,17 @@ English | [中文](README.zh_cn.md)
 
 | Capability | Details |
 |---|---|
-| Auto-detection | `WM_DEVICECHANGE` events plus periodic polling as a belt-and-braces approach, so inserts and removals are handled immediately |
-| External-device filtering | Only external volumes such as USB sticks and card readers; fixed disks, optical drives and RAM disks are ignored |
-| Config-driven | YAML defines source paths, destinations, exclude patterns and conflict policy |
+| Cross-platform | Windows and Linux from one codebase. macOS is untested but the POSIX device layer covers it |
+| Auto-detection | Windows: `WM_DEVICECHANGE` events. Linux: `pyudev` when installed, otherwise polling. Both also poll, so inserts and removals are still caught after sleep or a driver glitch |
+| External-device filtering | Only external volumes such as USB sticks and card readers; fixed disks, optical drives, RAM disks and network shares are ignored |
+| Config-driven | YAML — or the legacy `key=value` card config — defines source paths, destinations, exclude patterns and conflict policy |
 | In-page editing | Add, edit and delete rules directly on the dashboard; saving writes back to the device YAML and takes effect immediately |
-| Path picking | Both the source and destination support a "Browse…" button that opens the native OS folder dialog |
+| Path picking | Both the source and destination support a "Browse…" button that opens the native folder dialog (Windows COM dialog, `zenity`/`kdialog` on Linux) |
 | Auto-sync toggle | The `enable` field controls whether inserting the card syncs automatically, switchable on the page |
 | Manual trigger | "Sync now" always runs, whether or not `enable` is on |
 | Smart dedup | Compares content hashes and skips duplicates, so nothing takes up disk twice |
 | Live dashboard | A local web page with SSE progress push, per-file logs and history |
-| Background operation | Lives in the system tray, takes no desktop space, and closing the page does not stop syncing |
+| Background operation | Lives in the system tray where one is available; on a headless Linux box it runs as a user service and the dashboard is reached over an SSH tunnel |
 | Safety boundary | The dashboard binds `127.0.0.1` only and is never exposed to the internet |
 
 ---
@@ -50,19 +51,46 @@ You can also put **no file on the card at all** and configure everything from th
 
 ### 2. Run
 
-```bash
-# from source
-python -m dsync
+**Windows** — either the packaged EXE, or from source:
 
-# packaged EXE
+```bat
+python -m dsync
 dist\D-Sync.exe
+```
+
+Install it to start at login with `contrib\windows\install_autostart.ps1`.
+
+**Linux** — install the user service (no root needed):
+
+```bash
+pip install --user -r requirements.txt
+./contrib/linux/install.sh
+```
+
+That writes `~/.config/systemd/user/dsync.service`, starts it, and keeps it running
+across logins. For instant detection instead of polling, install `pyudev`
+(`sudo apt install python3-pyudev`). Without a systemd desktop you can simply run:
+
+```bash
+python -m dsync --no-browser
 ```
 
 After startup:
 
-- a tray icon appears; right-click it to open the dashboard or quit
 - the dashboard is at `http://127.0.0.1:8765/` by default
-- logs go to `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
+- a tray icon appears where the desktop supports one; otherwise it runs headless and
+  the dashboard is still served (reach it from another machine over an SSH tunnel)
+- logs go to `%LOCALAPPDATA%\D-Sync\logs\dsync.log` on Windows and
+  `~/.local/share/D-Sync/logs/dsync.log` on Linux
+
+### 3. Sync one card from the command line
+
+Useful for scripting, and the quickest way to check a card without the daemon:
+
+```bash
+python -m dsync --sync /media/user/CARD     # Linux / macOS
+python -m dsync --sync E:\                  # Windows
+```
 
 ---
 
@@ -109,8 +137,9 @@ Just one hint and a "Create config file" button, which opens a blank editor to w
 
 ## Config file format
 
-The file name is looked up in order: `dsync.yml` → `dsync.yaml`.
-Override it on the command line with `--config-name` (repeatable).
+The file name is looked up in order: `dsync.yml` → `dsync.yaml` → `.dsync`.
+Override it on the command line with `--config-name` (repeatable). A card carrying
+both formats is read as YAML.
 
 Three syntaxes are supported, from simplest to most explicit:
 
@@ -143,6 +172,33 @@ mappings:
 ```
 
 Whatever the syntax, it is normalised into a `rules` list internally.
+
+### Legacy `.dsync` format
+
+Cards written for the original shell implementation still work unchanged. That
+format is plain `key=value` text, not YAML:
+
+```text
+enabled=true
+name=camera-card-1
+sync=DCIM /mnt/backup/photos
+sync=PRIVATE/M4ROOT/CLIP "/mnt/backup/video clips"
+exclude=.Trashes .Spotlight-V100 @eaDir
+overwrite=true
+```
+
+| Key | Meaning |
+|---|---|
+| `enabled` | `true` (default) or `false`/`0`/`no`/`off` to disable auto-sync |
+| `sync` | `<source-subpath> <destination>`, split on the first whitespace so the destination may contain spaces. Repeat for several rules |
+| `exclude` | Space-separated glob patterns, applied globally |
+| `overwrite` | Whether to overwrite a same-named destination file with different content |
+| `destination_root` | Base for destinations that are not absolute |
+| `name` | Log label only; accepted and ignored |
+| `flags` | Accepted and ignored — it selected `rsync` options, and the sync engine is pure Python now |
+
+Editing such a card from the dashboard migrates it to `dsync.yml` and removes the old
+file, because the dashboard edits YAML and the two cannot share one file name.
 
 ### Fields
 
@@ -194,7 +250,9 @@ python -m dsync [options]
 |---|---|---|
 | `--host` | `127.0.0.1` | Dashboard bind address |
 | `--port` | `8765` | Dashboard port; moves to the next free port when taken |
-| `--config-name` | `dsync.yml` | Config file name on the device; may be repeated |
+| `--config-name` | `dsync.yml`, `dsync.yaml`, `.dsync` | Config file name on the device; may be repeated |
+| `--sync PATH` | — | Sync that path once and exit (no daemon) |
+| `--once` | off | Start the dashboard, then exit after a second |
 | `--include-fixed` | off | Also consider fixed disks (for card readers the OS reports as fixed) |
 | `--poll-interval` | `3.0` | Polling interval in seconds |
 | `--open-browser` | off | Open the browser automatically on startup |
@@ -212,34 +270,40 @@ D-Sync/
 │   ├── __main__.py          # python -m dsync entry point
 │   ├── app.py               # app controller: state, devices, config, sync orchestration
 │   ├── cli.py               # command-line parsing
-│   ├── config.py            # YAML parsing, validation, edit-model conversion
-│   ├── devices.py           # Win32 device events + polling detection
+│   ├── config.py            # YAML + legacy .dsync parsing, validation, edit-model conversion
+│   ├── devices.py           # device detection: Win32 events / udev, plus polling
 │   ├── events.py            # event bus (the SSE data source)
-│   ├── filedialog.py        # native path picker
+│   ├── filedialog.py        # native path picker (COM on Windows, zenity/kdialog on Linux)
 │   ├── logging_setup.py     # logging and data directory
 │   ├── syncer.py            # sync engine: rule expansion, excludes, copying, dedup
 │   ├── tray.py              # system tray
 │   └── web/
 │       ├── server.py        # REST API + SSE
 │       └── static/          # dashboard front end (plain HTML/CSS/JS, i18n.js for strings)
+├── contrib/
+│   ├── linux/               # systemd user service + installer
+│   └── windows/             # start-at-login script
 ├── scripts/                 # packaging and verification scripts
 ├── tests/                   # pytest suites
 ├── assets/                  # icons
 ├── run_dsync.py             # PyInstaller entry point
-└── dist/D-Sync.exe          # packaged artifact
+└── dist/D-Sync.exe          # packaged artifact (Windows)
 ```
 
 ---
 
 ## Data and log locations
 
-| Content | Path |
-|---|---|
-| Logs | `%LOCALAPPDATA%\D-Sync\logs\dsync.log` (keeps 5 rotating files) |
-| Dashboard port | `http://127.0.0.1:8765/` |
+| Content | Windows | Linux / macOS |
+|---|---|---|
+| Logs | `%LOCALAPPDATA%\D-Sync\logs\dsync.log` | `~/.local/share/D-Sync/logs/dsync.log` |
+| Dashboard | `http://127.0.0.1:8765/` | `http://127.0.0.1:8765/` |
+
+Logs rotate at 2 MB, keeping 5 files. Override the data directory with
+`$XDG_DATA_HOME` on POSIX, or `SDSYNC_DATA_DIR` on either platform.
 
 > During tests the `SDSYNC_DATA_DIR` environment variable redirects the data directory
-> to a temp path, so `%LOCALAPPDATA%\D-Sync` is never touched.
+> to a temp path, so the real one is never touched.
 
 ---
 
@@ -251,12 +315,37 @@ All UI strings live in `dsync/web/static/i18n.js`.
 
 ---
 
+## Safety
+
+The sync engine is written to be hard to lose data with:
+
+- **Nothing is ever deleted.** There is no `--delete` equivalent at any setting; files on
+  the card are read and copied, never removed, and files at the destination that are no
+  longer on the card are left alone.
+- **The card is only ever read.** No code path writes to the source volume.
+- **The card's own config is excluded.** The file that drives the copy is never copied to
+  the destination, so it cannot later overwrite a different card's config.
+- **Rule sources are confined to the card.** An absolute source, or one containing `..`,
+  is rejected instead of being resolved — otherwise a card could ask to read `/etc`, or
+  climb out of its own mount point.
+- **A destination inside the card is refused**, which would otherwise copy the card onto
+  itself, recursively.
+- **Writes are atomic.** Each file is copied to a `.dsync-part` sibling and then renamed,
+  so an interrupted transfer never leaves a half-written file under the real name.
+- **No root.** Everything except the Windows installer runs as your own user. The Linux
+  unit is a *user* service; nothing mounts as root or touches udev rules.
+- **The dashboard is local-only.** It binds `127.0.0.1` and is never exposed to a network.
+
+---
+
 ## FAQ
 
 **Nothing happens when I insert a card?**
-1. Check the config file name — by default `dsync.yml` / `dsync.yaml` is looked up at the device root
+1. Check the config file name — by default `dsync.yml` / `dsync.yaml` / `.dsync` is looked up at the device root
 2. Check that the volume is recognised as an **external device** (USB stick / card reader). Some card readers mount the card as a fixed disk; in that case start with `--include-fixed`
-3. Look at the dashboard's "Activity log" or the messages in `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
+3. Look at the dashboard's "Activity log", or the log file (see *Data and log locations*)
+4. On Linux, check whether `pyudev` is installed; without it detection is polling-only,
+   so an insert is noticed a few seconds late rather than instantly
 
 **It says "the destination cannot be inside the device"?**
 That guard prevents recursive copying (copying files back onto the card they came from).

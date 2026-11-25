@@ -12,7 +12,10 @@ _CONFIGURED = False
 
 
 def app_data_dir() -> Path:
-    """Return the application data directory (Windows: %LOCALAPPDATA%\\D-Sync).
+    """Return the application data directory.
+
+    Windows: ``%LOCALAPPDATA%\\D-Sync``
+    POSIX:   ``$XDG_DATA_HOME/D-Sync`` (defaults to ``~/.local/share/D-Sync``)
 
     Override it with the ``SDSYNC_DATA_DIR`` environment variable (used by tests
     and portable setups).

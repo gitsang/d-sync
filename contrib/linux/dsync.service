@@ -1,0 +1,41 @@
+# /etc/systemd/system/dsync.service
+#
+# Optional systemd integration for D-Sync on Linux.
+#
+# Unlike the original shell implementation, D-Sync is a single resident process that
+# watches for devices itself, so this unit does NOT need a udev rule, a template unit
+# per device, or root. Device detection happens in-process (pyudev when installed,
+# polling otherwise), and the systemd unit only has to keep the process alive.
+#
+# Install with contrib/linux/install.sh, which substitutes __DSYNC_USER__.
+
+[Unit]
+Description=D-Sync external device auto-sync daemon
+Documentation=https://github.com/gitsang/d-sync
+# The dashboard binds to localhost only; bringing the unit up before the network is
+# fully configured is fine.
+After=local-fs.target
+
+[Service]
+Type=simple
+# Runs entirely as the normal user: no mount, no root, nothing privileged.
+User=__DSYNC_USER__
+Group=__DSYNC_GROUP__
+WorkingDirectory=__DSYNC_HOME__
+
+# --no-browser: nothing is logged in to open a browser for. The dashboard is still
+# served, so it can be reached from another machine over an SSH tunnel if wanted.
+ExecStart=__DSYNC_PYTHON__ -m dsync --no-browser
+
+# Restart on crash. A card insert during the restart window is picked up by the
+# polling loop as soon as the process is back.
+Restart=on-failure
+RestartSec=5
+
+# Modest hardening: the daemon only needs to read cards and write to its data dir
+# and the configured destinations.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

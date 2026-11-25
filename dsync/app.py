@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
+    DEFAULT_CONFIG_NAMES,
+    LEGACY_CONFIG_NAME,
     ConfigError,
     SyncConfig,
     config_to_editable,
@@ -27,7 +29,13 @@ from .config import (
     parse_yaml_text,
     validate_destination,
 )
-from .devices import DeviceMonitor, list_external_drives, list_removable_drives, volume_label
+from .devices import (
+    DeviceMonitor,
+    device_key,
+    list_external_drives,
+    list_removable_drives,
+    volume_label,
+)
 from .events import EventBus
 from .filedialog import PickerUnavailable, pick_path_for_rule
 from .logging_setup import app_data_dir
@@ -36,7 +44,7 @@ from .web.server import WebApp, WebServer, find_free_port
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP_NAME = "D-Sync"
 
 
@@ -45,7 +53,7 @@ class SyncApplication:
 
     def __init__(
         self,
-        config_names: tuple[str, ...] = ("dsync.yml", "dsync.yaml"),
+        config_names: tuple[str, ...] = DEFAULT_CONFIG_NAMES,
         poll_interval: float = 3.0,
         include_fixed: bool = False,
         open_browser: bool = False,
@@ -106,7 +114,7 @@ class SyncApplication:
     # ============================================================== devices
     def on_device_inserted(self, path: Path) -> None:
         """A device was inserted."""
-        key = str(path).upper().rstrip("\\")
+        key = device_key(path)
         with self._lock:
             self._devices[key] = {
                 "path": str(path),
@@ -126,7 +134,7 @@ class SyncApplication:
         self._handle_device(path)
 
     def on_device_removed(self, path: Path) -> None:
-        key = str(path).upper().rstrip("\\")
+        key = device_key(path)
         with self._lock:
             self._devices.pop(key, None)
         self.bus.publish("device", action="removed", path=str(path),
@@ -150,7 +158,7 @@ class SyncApplication:
             logger.info("No config file at the root of device %s (%s); waiting for one to be created on the page",
                         path, ", ".join(self.config_names))
             with self._lock:
-                key = str(path).upper().rstrip("\\")
+                key = device_key(path)
                 if key in self._devices:
                     self._devices[key]["state"] = "detected"
                     self._devices[key]["config"] = ""
@@ -166,7 +174,7 @@ class SyncApplication:
             logger.error("Failed to parse the config: %s", exc)
             self.bus.publish("error", message=f"Failed to parse {config_path.name}: {exc}")
             with self._lock:
-                key = str(path).upper().rstrip("\\")
+                key = device_key(path)
                 if key in self._devices:
                     self._devices[key]["state"] = "error"
                     self._devices[key]["config"] = config_path.name
@@ -174,7 +182,7 @@ class SyncApplication:
             return
 
         with self._lock:
-            key = str(path).upper().rstrip("\\")
+            key = device_key(path)
             if key in self._devices:
                 self._devices[key]["config"] = source_desc
                 self._devices[key]["enable"] = config.enabled
@@ -200,7 +208,7 @@ class SyncApplication:
     # ============================================================== sync
     def run_sync(self, card_root: Path, config: SyncConfig) -> None:
         """Run one sync (executed synchronously on the calling thread)."""
-        key = str(card_root).upper().rstrip("\\")
+        key = device_key(card_root)
         engine = SyncEngine(config, progress=self._make_progress(key))
         started = time.time()
         with self._lock:
@@ -261,15 +269,15 @@ class SyncApplication:
                 self._engine = None
                 self._current_file = None
 
-    def _make_progress(self, device_key: str):
+    def _make_progress(self, dev_key: str):
         """Build a progress callback for one device that writes progress into its own state."""
 
         def _progress(event: str, payload: dict) -> None:
-            self._on_progress(event, payload, device_key)
+            self._on_progress(event, payload, dev_key)
 
         return _progress
 
-    def _on_progress(self, event: str, payload: dict, device_key: str = "") -> None:
+    def _on_progress(self, event: str, payload: dict, dev_key: str = "") -> None:
         """Sync engine progress callback -> update the device state and republish on the bus."""
         if event == "phase":
             phase = payload.get("phase", "copying")
@@ -282,17 +290,17 @@ class SyncApplication:
             with self._lock:
                 self._total_files = total
                 self._done_files = 0
-                if device_key and device_key in self._devices:
-                    self._devices[device_key]["total_files"] = total
-                    self._devices[device_key]["done_files"] = 0
+                if dev_key and dev_key in self._devices:
+                    self._devices[dev_key]["total_files"] = total
+                    self._devices[dev_key]["done_files"] = 0
             self.bus.publish("plan", **payload)
         elif event == "file_start":
             with self._lock:
                 self._current_file = payload.get("source")
                 done = max(0, payload.get("index", 1) - 1)
                 self._done_files = done
-                if device_key and device_key in self._devices:
-                    self._devices[device_key]["done_files"] = done
+                if dev_key and dev_key in self._devices:
+                    self._devices[dev_key]["done_files"] = done
             self.bus.publish("file_start", **payload)
         elif event == "file_done":
             status = payload.get("status")
@@ -300,8 +308,8 @@ class SyncApplication:
                 done = payload.get("index", self._done_files)
                 self._done_files = done
                 self._current_file = None
-                if device_key and device_key in self._devices:
-                    device = self._devices[device_key]
+                if dev_key and dev_key in self._devices:
+                    device = self._devices[dev_key]
                     device["done_files"] = done
                     if status == "skipped":
                         device["skipped_files"] = device.get("skipped_files", 0) + 1
@@ -312,8 +320,8 @@ class SyncApplication:
             stats = payload.get("stats") or {}
             with self._lock:
                 self._stats = stats
-                if device_key and device_key in self._devices:
-                    device = self._devices[device_key]
+                if dev_key and dev_key in self._devices:
+                    device = self._devices[dev_key]
                     device["total_files"] = stats.get("total_files", device.get("total_files", 0))
                     device["done_files"] = (stats.get("copied_files", 0)
                                            + stats.get("skipped_files", 0)
@@ -334,7 +342,7 @@ class SyncApplication:
         with self._lock:
             known = set(self._devices)
         for path in found:
-            key = str(path).upper().rstrip("\\")
+            key = device_key(path)
             if key not in known:
                 self.on_device_inserted(path)
         return {"scanned": len(found)}
@@ -346,7 +354,7 @@ class SyncApplication:
             known = set(self._devices)
         devices = []
         for path in found:
-            key = str(path).upper().rstrip("\\")
+            key = device_key(path)
             devices.append({
                 "path": str(path),
                 "name": volume_label(path),
@@ -410,7 +418,7 @@ class SyncApplication:
             return {"error": "The config has no enabled rules"}
 
         with self._lock:
-            key = str(root).upper().rstrip("\\")
+            key = device_key(root)
             if key in self._devices:
                 self._devices[key]["state"] = "syncing"
         threading.Thread(target=self.run_sync, args=(root, config),
@@ -537,7 +545,7 @@ class SyncApplication:
             return {"error": f"Write failed (the SD card may be read-only): {exc}"}
 
         with self._lock:
-            key = str(root).upper().rstrip("\\")
+            key = device_key(root)
             if key in self._devices:
                 self._devices[key]["enable"] = config.enabled
 
@@ -647,11 +655,28 @@ class SyncApplication:
             return {"saved": False, "error": "No SD card path given"}
 
         existing = find_config_file(card_root, self.config_names)
-        path = existing or (card_root / self.config_names[0])
+        migrated_from: str = ""
+        if existing is not None and existing.name == LEGACY_CONFIG_NAME:
+            # The dashboard edits YAML. Writing YAML back into the legacy key=value file
+            # would make it unparseable on the next insert, so save as YAML and retire the
+            # old file instead.
+            migrated_from = existing.name
+            path = card_root / self.config_names[0]
+        else:
+            path = existing or (card_root / self.config_names[0])
         try:
             path.write_text(text, encoding="utf-8")
         except OSError as exc:
             return {"saved": False, "error": f"Write failed (the SD card may be read-only): {exc}"}
+
+        if migrated_from:
+            try:
+                (card_root / migrated_from).unlink()
+                logger.info("Migrated the legacy %s to %s", migrated_from, path.name)
+                self.bus.publish("config", action="migrated",
+                                 message=f"Migrated {migrated_from} to {path.name}")
+            except OSError as exc:
+                logger.warning("Could not remove the legacy %s: %s", migrated_from, exc)
 
         logger.info("Config saved to %s (%d rules)", path, len(config.rules))
         self.bus.publish("config", action="saved", path=str(path),
@@ -694,7 +719,7 @@ class SyncApplication:
         except OSError as exc:
             return {"deleted": False, "error": f"Delete failed: {exc}"}
         with self._lock:
-            key = str(root).upper().rstrip("\\")
+            key = device_key(root)
             if key in self._devices:
                 self._devices[key]["config"] = ""
                 self._devices[key]["state"] = "detected"
@@ -744,7 +769,10 @@ class SyncApplication:
         return self._web
 
     def start_monitor(self) -> None:
-        ignore = [Path(app_data_dir().anchor or "C:\\")]
+        # Never treat the volume holding the app's own data dir as a card. On POSIX the
+        # anchor of that path is "/", i.e. the root filesystem -- correct, because the
+        # root is never a removable card. On Windows it is the system drive ("C:\\").
+        ignore = [Path(app_data_dir().anchor or os.sep)]
         self._monitor = DeviceMonitor(
             on_inserted=self.on_device_inserted,
             on_removed=self.on_device_removed,

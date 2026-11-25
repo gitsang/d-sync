@@ -272,28 +272,35 @@ BROWSEINFOF_NEWDIALOGSTYLE = 0x40
 # Note that HWND and LPARAM are both 64-bit on 64-bit Windows and must be declared
 # as c_ssize_t / c_void_p; otherwise ctypes passes them as 32-bit ints and the
 # pointers the callback receives are truncated.
-_BFFMProc = ctypes.WINFUNCTYPE(
-    ctypes.c_int,          # return value: int
-    ctypes.c_void_p,       # HWND hwnd
-    ctypes.c_uint,         # UINT uMsg
-    ctypes.c_ssize_t,      # LPARAM lParam
-    ctypes.c_ssize_t,      # LPARAM lpData
-)
+#
+# Everything Win32-specific is defined only on Windows: ctypes.WINFUNCTYPE does not
+# exist elsewhere, and evaluating it at import time made this module unimportable on
+# Linux and macOS.
+if IS_WINDOWS:
+    _BFFMProc = ctypes.WINFUNCTYPE(
+        ctypes.c_int,          # return value: int
+        ctypes.c_void_p,       # HWND hwnd
+        ctypes.c_uint,         # UINT uMsg
+        ctypes.c_ssize_t,      # LPARAM lParam
+        ctypes.c_ssize_t,      # LPARAM lpData
+    )
 
+    class BROWSEINFO(ctypes.Structure):
+        """The ``SHBrowseForFolder`` parameter structure."""
 
-class BROWSEINFO(ctypes.Structure):
-    """The ``SHBrowseForFolder`` parameter structure."""
-
-    _fields_ = [
-        ("hwndOwner", wintypes.HWND),
-        ("pidlRoot", ctypes.c_void_p),
-        ("pszDisplayName", ctypes.c_wchar_p),
-        ("lpszTitle", ctypes.c_wchar_p),
-        ("ulFlags", wintypes.UINT),
-        ("lpfn", ctypes.c_void_p),
-        ("lParam", ctypes.c_long),
-        ("iImage", ctypes.c_int),
-    ]
+        _fields_ = [
+            ("hwndOwner", wintypes.HWND),
+            ("pidlRoot", ctypes.c_void_p),
+            ("pszDisplayName", ctypes.c_wchar_p),
+            ("lpszTitle", ctypes.c_wchar_p),
+            ("ulFlags", wintypes.UINT),
+            ("lpfn", ctypes.c_void_p),
+            ("lParam", ctypes.c_long),
+            ("iImage", ctypes.c_int),
+        ]
+else:  # pragma: no cover - non-Windows
+    _BFFMProc = None
+    BROWSEINFO = None  # type: ignore[assignment]
 
 
 def _run_dialog_legacy(initial_dir: str, title: str) -> str | None:
@@ -434,6 +441,61 @@ def _run_file_dialog_legacy(initial_dir: str, file_filter: str,
 
 
 # ----------------------------------------------------------------------
+# POSIX backend (Linux / macOS)
+# ----------------------------------------------------------------------
+def _posix_picker_command(folders_only: bool) -> list[str] | None:
+    """Return the command for whichever native folder picker is installed.
+
+    ``zenity`` (GNOME) and ``kdialog`` (KDE) are the two portable choices; both are
+    plain CLI programs that print the chosen path on stdout. Returns ``None`` when
+    neither is available, in which case the caller falls back to typing the path.
+    """
+    import shutil
+
+    if shutil.which("zenity"):
+        if folders_only:
+            return ["zenity", "--file-selection", "--directory"]
+        return ["zenity", "--file-selection"]
+    if shutil.which("kdialog"):
+        if folders_only:
+            return ["kdialog", "--getexistingdirectory"]
+        return ["kdialog", "--getopenfilename"]
+    if sys.platform == "darwin" and shutil.which("osascript"):
+        return ["osascript", "-e", "POSIX path of (choose folder)"]
+    return None
+
+
+def _run_posix_picker(initial_dir: str, title: str, folders_only: bool) -> str | None:
+    """Show a native picker on Linux/macOS, or raise :class:`PickerUnavailable`."""
+    import subprocess
+
+    command = _posix_picker_command(folders_only)
+    if command is None:
+        raise PickerUnavailable(
+            "No native folder picker found; install zenity or kdialog, or type the path"
+        )
+    if title:
+        if command[0] == "zenity":
+            command += ["--title", title]
+        elif command[0] == "kdialog":
+            command += ["--title", title]
+    if initial_dir and command[0] in ("zenity", "kdialog"):
+        if command[0] == "zenity":
+            command += ["--filename", initial_dir.rstrip("/") + "/"]
+        else:
+            command.insert(2, initial_dir)
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise PickerUnavailable(f"Could not run {command[0]}: {exc}") from exc
+    if completed.returncode != 0:
+        # zenity/kdialog exit non-zero when the user cancels.
+        return None
+    chosen = completed.stdout.strip()
+    return chosen or None
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
 def pick_folder(initial_dir: str | Path | None = None, title: str = "") -> str | None:
@@ -442,6 +504,12 @@ def pick_folder(initial_dir: str | Path | None = None, title: str = "") -> str |
     start = str(initial_dir) if initial_dir else ""
     if start and not os.path.isdir(start):
         start = os.path.dirname(start) or ""
+
+    if not IS_WINDOWS:
+        result = _run_posix_picker(start, title or "Select a folder", folders_only=True)
+        if result:
+            logger.info("User selected folder: %s", result)
+        return result or None
 
     if _file_dialog_class_available():
         result = _run_dialog(start, folders_only=True, file_filter=None, title=title)
@@ -462,6 +530,12 @@ def pick_file(initial_dir: str | Path | None = None,
     start = str(initial_dir) if initial_dir else ""
     if start and not os.path.isdir(start):
         start = os.path.dirname(start) or ""
+
+    if not IS_WINDOWS:
+        result = _run_posix_picker(start, title or "Select a file", folders_only=False)
+        if result:
+            logger.info("User selected file: %s", result)
+        return result or None
 
     if _file_dialog_class_available():
         result = _run_dialog(start, folders_only=False, file_filter=file_filter,

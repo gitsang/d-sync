@@ -231,3 +231,35 @@ def test_preview_config_returns_yaml(tmp_path):
     result = app.action_preview_config({"card_path": str(card)})
     assert "source" in result["yaml"]
     assert "DCIM" in result["yaml"]
+
+
+def test_saving_over_a_legacy_config_migrates_to_yaml(tmp_path):
+    """Editing a .dsync card from the dashboard must not write YAML into .dsync.
+
+    The legacy file is parsed as key=value, so YAML written under that name would be
+    silently unreadable on the next insert. Save as dsync.yml and retire the old file.
+    """
+    from dsync.app import SyncApplication
+    from dsync.config import LEGACY_CONFIG_NAME, load_config_file
+
+    card = tmp_path / "card"
+    card.mkdir()
+    (card / LEGACY_CONFIG_NAME).write_text("sync=DCIM /tmp/out\n", encoding="utf-8")
+
+    app = SyncApplication()
+    # The save endpoint takes the structured editable model, not raw YAML text.
+    payload = {
+        "card_path": str(card),
+        "model": {
+            "enable": True,
+            "rules": [{"source": "DCIM", "destination": "/tmp/out"}],
+        },
+    }
+    result = app.action_save_config(payload)
+    assert result["saved"] is True
+
+    # The YAML file now exists, the legacy one is gone, and the card still loads.
+    assert (card / "dsync.yml").is_file()
+    assert not (card / LEGACY_CONFIG_NAME).exists()
+    config = load_config_file(card / "dsync.yml", card_root=card)
+    assert config.rules[0].source == "DCIM"

@@ -1,5 +1,17 @@
+# Core: config parsing (YAML), and the dashboard/web layer use the standard library.
 pyyaml>=6.0
-pystray>=0.19
+
+# Windows: system tray icon and its generated bitmap.
+# Skipped automatically where no tray can be shown.
+pystray>=0.19; sys_platform == "win32"
 pillow>=10.0
-pyinstaller>=6.0
+
+# Linux: instant device notification. Optional -- without it D-Sync falls back to
+# polling, which is a few seconds slower but otherwise identical.
+pyudev>=0.24; sys_platform == "linux"
+
+# Packaging: the Windows single-file EXE.
+pyinstaller>=6.0; sys_platform == "win32"
+
+# Tests
 pytest>=8.0

@@ -18,7 +18,7 @@ import os
 import shutil
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Iterator, Sequence
 
 from .config import SyncConfig, SyncRule, match_pattern, validate_destination
@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, dict], None]
 
 HASH_CHUNK = 1024 * 1024
+
+CARD_CONFIG_NAMES = frozenset({".dsync", "dsync.yml", "dsync.yaml"})
+"""Card-local config files. Always excluded from the sync: the config that drives the
+copy must never be copied, otherwise it lands in the destination and can overwrite a
+different card's config later."""
+
+_UNSAFE_SOURCE_MESSAGE = (
+    "source must be a relative path inside the card and must not contain '..'"
+)
+
+
+def validate_rule_source(source: str) -> str | None:
+    """Validate a rule's source path, returning an error description or None.
+
+    The source is resolved against the card root, so an absolute path would escape the
+    card entirely and a ``..`` component would climb out of it. Both are rejected
+    rather than silently clamped: a config asking for them is either a mistake or an
+    attempt to read files the user never intended to expose.
+    """
+    text = (source or "").strip()
+    if not text:
+        return None  # empty means "the whole card root"
+    if Path(text).is_absolute() or (len(text) > 1 and text[1] == ":"):
+        return _UNSAFE_SOURCE_MESSAGE
+    parts = PurePosixPath(text.replace("\\", "/")).parts
+    if ".." in parts:
+        return _UNSAFE_SOURCE_MESSAGE
+    return None
 
 
 @dataclass
@@ -129,6 +157,9 @@ def iter_source_files(card_root: Path, rule: SyncRule,
         return
 
     def excluded(rel_to_source: str, rel_to_card: str) -> bool:
+        # The config that drives this sync is never copied to the destination.
+        if PurePosixPath(rel_to_card).name in CARD_CONFIG_NAMES:
+            return True
         if rule.matches(rel_to_source):
             return True
         for pattern in global_exclude:
@@ -164,6 +195,10 @@ def match_rules(card_root: Path, config: SyncConfig) -> list[FileTask]:
     seen: set[tuple[str, str]] = set()
 
     for rule in config.active_rules():
+        error = validate_rule_source(rule.source)
+        if error:
+            logger.warning("Skipping rule %r: %s", rule.source, error)
+            continue
         destination_root = config.resolve_destination(rule)
         source = card_root / rule.source if rule.source else card_root
         source_is_dir = source.is_dir()
@@ -181,7 +216,12 @@ def match_rules(card_root: Path, config: SyncConfig) -> list[FileTask]:
             else:
                 destination = destination_root / file_path.name
 
-            key = (str(file_path).lower(), str(destination).lower())
+            # Windows paths are case-insensitive; POSIX ones are not, so folding them
+            # there would treat two genuinely different files as the same task.
+            if os.name == "nt":
+                key = (str(file_path).lower(), str(destination).lower())
+            else:
+                key = (str(file_path), str(destination))
             if key in seen:
                 continue
             seen.add(key)

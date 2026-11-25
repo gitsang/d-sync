@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-后台常驻的 Windows 应用。**检测到外置设备（U 盘 / 读卡器）插入 → 读取卡根目录的 YAML 配置 → 按配置把文件复制到目标路径 → 自动跳过重复文件**，同步进度在本地看板上实时展示。
+后台常驻应用，支持 **Windows 与 Linux**。**检测到外置设备（U 盘 / 读卡器 / SD 卡）插入 → 读取卡根目录的配置 → 按配置把文件复制到目标路径 → 自动跳过重复文件**，同步进度在本地看板上实时展示。
 
 ---
 
@@ -10,16 +10,17 @@
 
 | 能力 | 说明 |
 |---|---|
-| 自动检测 | `WM_DEVICECHANGE` 事件 + 定时轮询双保险，插拔瞬间即响应 |
-| 外置设备过滤 | 只识别 U 盘、读卡器等外置卷，固定磁盘 / 光驱 / 内存盘不计入 |
-| 配置驱动 | YAML 定义源路径、目标路径、排除规则、冲突策略 |
+| 跨平台 | 同一份代码支持 Windows 与 Linux。macOS 未实测，但 POSIX 设备层已覆盖 |
+| 自动检测 | Windows 用 `WM_DEVICECHANGE` 事件；Linux 装了 `pyudev` 则即时，未装则轮询。两端都有轮询兜底，休眠唤醒、驱动异常后依然能识别 |
+| 外置设备过滤 | 只识别 U 盘、读卡器等外置卷，固定磁盘 / 光驱 / 内存盘 / 网络共享不计入 |
+| 配置驱动 | YAML，或旧版 `key=value` 卡上配置，定义源路径、目标路径、排除规则、冲突策略 |
 | 页面配置 | 看板内直接增删改规则，保存后写回设备 YAML 并立即生效 |
-| 路径选择 | 源路径、目标路径都支持「浏览…」按钮，弹出系统原生窗口选目录 |
+| 路径选择 | 源路径、目标路径都支持「浏览…」按钮，弹出系统原生窗口选目录（Windows 用 COM 对话框，Linux 用 `zenity` / `kdialog`） |
 | 自动同步开关 | 配置里的 `enable` 控制插卡是否自动同步，页面可一键切换 |
 | 手动触发 | 无论 `enable` 是否开启，点「立即同步」都会执行 |
 | 智能去重 | 比对内容哈希，重复文件自动跳过，不重复占用磁盘 |
 | 实时看板 | 本地 Web 页面，SSE 推送进度、逐文件日志、历史记录 |
-| 后台运行 | 系统托盘常驻，不占桌面，关掉页面不影响同步 |
+| 后台运行 | 有托盘时驻留托盘；无图形界面的 Linux 上作为用户服务运行，看板可通过 SSH 隧道访问 |
 | 安全边界 | 看板仅监听 `127.0.0.1`，不对外网暴露 |
 
 ---
@@ -51,19 +52,44 @@ rules:
 
 ### 2. 运行
 
-```bash
-# 源码方式
-python -m dsync
+**Windows** —— 用打包好的 EXE，或从源码运行：
 
-# 打包后的 EXE
+```bat
+python -m dsync
 dist\D-Sync.exe
+```
+
+开机自启用 `contrib\windows\install_autostart.ps1`。
+
+**Linux** —— 安装用户服务（不需要 root）：
+
+```bash
+pip install --user -r requirements.txt
+./contrib/linux/install.sh
+```
+
+该脚本会写入 `~/.config/systemd/user/dsync.service` 并启动，登录后自动运行。
+想让设备检测即时响应，安装 `pyudev`（`sudo apt install python3-pyudev`）；
+不装也能用，只是靠轮询、插卡后要等几秒。没有 systemd 桌面环境时也可直接运行：
+
+```bash
+python -m dsync --no-browser
 ```
 
 启动后：
 
-- 系统托盘出现图标，右键可打开看板 / 退出
 - 看板地址默认 `http://127.0.0.1:8765/`
-- 日志写入 `%LOCALAPPDATA%\D-Sync\logs\dsync.log`
+- 桌面支持托盘时出现托盘图标；否则无界面运行，看板照常提供服务（可在别的机器上通过 SSH 隧道访问）
+- 日志位置见「数据与日志位置」
+
+### 3. 命令行同步单张卡
+
+适合脚本调用，也是不启守护进程时最快验证一张卡的方式：
+
+```bash
+python -m dsync --sync /media/user/CARD     # Linux / macOS
+python -m dsync --sync E:\                  # Windows
+```
 
 ---
 
@@ -110,8 +136,8 @@ dist\D-Sync.exe
 
 ## 配置文件格式
 
-文件名按顺序查找：`dsync.yml` → `dsync.yaml`。
-可在命令行用 `--config-name` 覆盖（可重复指定）。
+文件名按顺序查找：`dsync.yml` → `dsync.yaml` → `.dsync`。
+可在命令行用 `--config-name` 覆盖（可重复指定）。两种格式同时存在时按 YAML 处理。
 
 支持三种写法，从简到繁：
 
@@ -144,6 +170,32 @@ mappings:
 ```
 
 无论哪种写法，最终都会被归一化成 `rules` 列表。
+
+### 旧版 `.dsync` 格式
+
+为原 shell 实现写的卡可直接继续使用，格式是纯 `key=value` 文本，不是 YAML：
+
+```text
+enabled=true
+name=camera-card-1
+sync=DCIM /mnt/backup/photos
+sync=PRIVATE/M4ROOT/CLIP "/mnt/backup/video clips"
+exclude=.Trashes .Spotlight-V100 @eaDir
+overwrite=true
+```
+
+| 键 | 含义 |
+|---|---|
+| `enabled` | `true`（默认）或 `false`/`0`/`no`/`off` 关闭自动同步 |
+| `sync` | `<卡内子路径> <目标路径>`，按第一个空白切分，因此目标路径可含空格；可写多行 |
+| `exclude` | 空格分隔的 glob 通配，全局生效 |
+| `overwrite` | 目标存在同名但内容不同时是否覆盖 |
+| `destination_root` | 相对目标的基准目录 |
+| `name` | 仅用于日志标识，接受但忽略 |
+| `flags` | 接受但忽略 —— 它原本用来选 rsync 参数，而现在同步引擎是纯 Python 实现 |
+
+从看板编辑此类卡时会自动迁移为 `dsync.yml` 并删除旧文件：
+看板编辑的是 YAML，两者不能共用一个文件名。
 
 ### 字段说明
 
@@ -195,7 +247,9 @@ python -m dsync [选项]
 |---|---|---|
 | `--host` | `127.0.0.1` | 看板监听地址 |
 | `--port` | `8765` | 看板监听端口，被占用时自动向后寻找 |
-| `--config-name` | `dsync.yml` | 设备上的配置文件名，可重复指定 |
+| `--config-name` | `dsync.yml`、`dsync.yaml`、`.dsync` | 设备上的配置文件名，可重复指定 |
+| `--sync 路径` | — | 同步指定路径一次后退出（不常驻） |
+| `--once` | 关 | 启动看板后约 1 秒退出 |
 | `--include-fixed` | 关 | 把固定磁盘也纳入候选（应对读卡器被识别为固定盘的情况） |
 | `--poll-interval` | `3.0` | 轮询间隔（秒） |
 | `--open-browser` | 关 | 启动后自动打开浏览器 |
@@ -213,16 +267,19 @@ D-Sync/
 │   ├── __main__.py          # python -m dsync 入口
 │   ├── app.py               # 应用主控：状态、设备、配置、同步编排
 │   ├── cli.py               # 命令行解析
-│   ├── config.py            # YAML 解析、校验、编辑模型互转
-│   ├── devices.py           # Win32 设备事件 + 轮询检测
+│   ├── config.py            # YAML 与旧版 .dsync 解析、校验、编辑模型互转
+│   ├── devices.py           # 设备检测：Win32 事件 / udev，外加轮询
 │   ├── events.py            # 事件总线（SSE 数据源）
-│   ├── filedialog.py        # 原生路径选择窗口
+│   ├── filedialog.py        # 原生路径选择窗口（Windows 用 COM，Linux 用 zenity/kdialog）
 │   ├── logging_setup.py     # 日志与数据目录
 │   ├── syncer.py            # 同步引擎：规则展开、排除、复制、去重
 │   ├── tray.py              # 系统托盘
 │   └── web/
 │       ├── server.py        # REST API + SSE
 │       └── static/          # 看板前端（原生 HTML/CSS/JS）
+├── contrib/
+│   ├── linux/               # systemd 用户服务与安装脚本
+│   └── windows/             # 开机自启脚本
 ├── scripts/                 # 打包与验证脚本
 ├── tests/                   # pytest 用例
 ├── assets/                  # 图标
@@ -234,13 +291,16 @@ D-Sync/
 
 ## 数据与日志位置
 
-| 内容 | 路径 |
-|---|---|
-| 日志 | `%LOCALAPPDATA%\D-Sync\logs\dsync.log`（滚动保存 5 份） |
-| 看板端口 | `http://127.0.0.1:8765/` |
+| 内容 | Windows | Linux / macOS |
+|---|---|---|
+| 日志 | `%LOCALAPPDATA%\D-Sync\logs\dsync.log` | `~/.local/share/D-Sync/logs/dsync.log` |
+| 看板 | `http://127.0.0.1:8765/` | `http://127.0.0.1:8765/` |
+
+日志按 2 MB 滚动，保留 5 份。POSIX 上可用 `$XDG_DATA_HOME`、两端都可用
+`SDSYNC_DATA_DIR` 覆盖数据目录。
 
 > 测试运行时会通过 `SDSYNC_DATA_DIR` 环境变量把数据目录重定向到临时目录，
-> 不会污染 `%LOCALAPPDATA%\D-Sync`。
+> 不会污染真实数据目录。
 
 ---
 
@@ -249,13 +309,34 @@ D-Sync/
 看板支持中英双语：默认英文，可在顶栏的语言下拉中切换到简体中文，选择记在
 `localStorage` 的 `dsync.lang`。所有界面文案集中在 `dsync/web/static/i18n.js`。
 
+## 安全性
+
+同步引擎在设计上尽量避免丢数据：
+
+- **永不删除**。任何设置下都没有 `--delete` 的对应物；卡上的文件只读取、只复制，
+  目标里那些卡上已不存在的文件也不会被清理。
+- **卡只读**。没有任何代码路径会写源卷。
+- **卡自身的配置永远排除**。驱动本次复制的配置文件不会被复制到目标，
+  否则它可能在之后覆盖另一张卡的配置。
+- **规则源路径限定在卡内**。绝对路径或含 `..` 的源会被拒绝而非解析执行 ——
+  否则一张卡就能要求读取 `/etc`，或爬出自己的挂载点。
+- **目标落在卡内会被拒绝**，否则等于把卡复制到它自己身上，无限递归。
+- **写入是原子的**。每个文件先复制为同级 `.dsync-part` 再改名，
+  传输中断不会在正式文件名下留下半截文件。
+- **不需要 root**。除 Windows 安装脚本外全部以当前用户身份运行；
+  Linux 用的是*用户*服务，不 mount、不碰 udev 规则。
+- **看板仅本地可达**。只绑定 `127.0.0.1`，不对外暴露。
+
+---
+
 ## 常见问题
 
 **插卡后没有反应？**
 1. 确认配置文件名正确 —— 默认在设备根目录查找 `dsync.yml` / `dsync.yaml`
 2. 确认该卷被识别为**外置设备**（U 盘 / 读卡器）。部分读卡器会把卡挂成固定磁盘，
    此时用 `--include-fixed` 启动
-3. 看看板「运行日志」或 `%LOCALAPPDATA%\D-Sync\logs\dsync.log` 里的提示
+3. 看看板「运行日志」，或日志文件里的提示（位置见「数据与日志位置」）
+4. Linux 上检查是否装了 `pyudev`；没装时只有轮询，插卡后要等几秒才识别
 
 **提示「目标路径不能位于设备内部」？**
 这是为了避免递归复制（把文件复制回自己所在的卡）。把 `destination_root`

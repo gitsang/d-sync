@@ -160,7 +160,7 @@ class WebApp:
     """Dashboard backend: aggregates state snapshots and exposes the action API."""
 
     def __init__(self, bus: EventBus, state_provider: Callable[[], dict],
-                 actions: dict[str, Callable[[dict], Any]], version: str = "1.0.0") -> None:
+                 actions: dict[str, Callable[[dict], Any]], version: str = "1.1.0") -> None:
         self.bus = bus
         self.state_provider = state_provider
         self.actions = actions

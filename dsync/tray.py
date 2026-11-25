@@ -1,11 +1,13 @@
-"""Windows system tray icon.
+"""System tray icon.
 
-While running in the background the program exists only as a tray icon:
+While running in the background the program can live only as a tray icon:
   * left-click / double-click -> open the dashboard page
   * right-click menu -> open dashboard / rescan now / cancel sync / quit
 
-When pystray is unavailable (e.g. no graphical environment) it degrades
-gracefully to plain console mode.
+``pystray`` supports Windows and the common Linux desktops, so this is used on
+both. When pystray is unavailable, or there is no graphical environment (a
+headless server, an SSH session, the systemd unit), it degrades gracefully to
+plain console/service mode -- the dashboard keeps working either way.
 """
 
 from __future__ import annotations

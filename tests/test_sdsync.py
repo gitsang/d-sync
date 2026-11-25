@@ -259,3 +259,107 @@ def test_file_done_carries_log_level(tmp_path):
 
     assert levels["copied"] == {"info"}
     assert levels["skipped"] == {"debug"}
+
+
+# ---------------------------------------------------------------- legacy .dsync format
+def test_parse_legacy_config_basic():
+    """The shell implementation's key=value card config must still load."""
+    from dsync.config import parse_legacy_config
+
+    config = parse_legacy_config(
+        "enabled=true\n"
+        "name=camera-card-1\n"
+        "sync=DCIM /mnt/backup/photos\n"
+        "sync=PRIVATE/M4ROOT/CLIP /mnt/backup/video clips\n"
+        "exclude=.Trashes .Spotlight-V100\n"
+        "overwrite=true\n"
+    )
+    assert [r.source for r in config.rules] == ["DCIM", "PRIVATE/M4ROOT/CLIP"]
+    # The destination may contain spaces: only the first whitespace run splits.
+    assert config.rules[1].destination == "/mnt/backup/video clips"
+    assert config.exclude == (".Trashes", ".Spotlight-V100")
+    assert config.overwrite is True
+    assert config.enabled is True
+
+
+def test_parse_legacy_config_disable_variants():
+    from dsync.config import parse_legacy_config
+
+    for value in ("false", "0", "no", "off", "OFF"):
+        assert parse_legacy_config(f"enabled={value}\nsync=DCIM /mnt/x\n").enabled is False
+
+
+def test_parse_legacy_config_ignores_rsync_flags():
+    """`flags` drove rsync in the shell version; here it must be accepted and ignored."""
+    from dsync.config import parse_legacy_config
+
+    config = parse_legacy_config(
+        "flags=--archive --delete --info=progress2\nsync=DCIM /mnt/x\n"
+    )
+    assert len(config.rules) == 1
+
+
+def test_parse_legacy_config_malformed_sync_is_skipped():
+    from dsync.config import parse_legacy_config
+
+    config = parse_legacy_config("sync=onlyoneword\nsync=DCIM /mnt/good\n")
+    assert [r.source for r in config.rules] == ["DCIM"]
+
+
+def test_parse_legacy_config_without_sync_is_not_an_error():
+    """A card with a config but no rules is 'nothing to do', not a failure."""
+    from dsync.config import parse_legacy_config
+
+    assert parse_legacy_config("enabled=true\nname=empty\n").rules == []
+
+
+def test_legacy_config_is_discovered_and_loaded(tmp_path):
+    """End to end: a .dsync card is found by find_config_file and parsed by load_config_file."""
+    from dsync.config import find_config_file, load_config_file
+
+    (tmp_path / ".dsync").write_text("sync=DCIM /mnt/out\n", encoding="utf-8")
+    found = find_config_file(tmp_path)
+    assert found is not None and found.name == ".dsync"
+    config = load_config_file(found, card_root=tmp_path)
+    assert config.rules[0].source == "DCIM"
+
+
+def test_yaml_config_wins_over_legacy(tmp_path):
+    """When a card carries both formats the richer YAML one is used."""
+    from dsync.config import find_config_file
+
+    (tmp_path / "dsync.yml").write_text("rules:\n  - source: A\n    destination: /mnt/a\n")
+    (tmp_path / ".dsync").write_text("sync=B /mnt/b\n")
+    found = find_config_file(tmp_path)
+    assert found is not None and found.name == "dsync.yml"
+
+
+# ---------------------------------------------------------------- safety guards
+def test_rule_source_rejects_absolute_and_dotdot():
+    from dsync.syncer import validate_rule_source
+
+    assert validate_rule_source("DCIM") is None
+    assert validate_rule_source("PRIVATE/M4ROOT/CLIP") is None
+    assert validate_rule_source("") is None
+    assert validate_rule_source("/etc") is not None
+    assert validate_rule_source("../../etc") is not None
+    assert validate_rule_source("a/../../b") is not None
+
+
+def test_config_file_is_never_copied(tmp_path):
+    """The card config that drives the sync must not land in the destination."""
+    from dsync.config import parse_config
+
+    card = tmp_path / "card"
+    (card / "DCIM").mkdir(parents=True)
+    (card / "DCIM" / "photo.jpg").write_bytes(b"x")
+    (card / ".dsync").write_text("sync=DCIM /mnt/out\n")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    config = parse_config({"source": "DCIM", "destination": str(out)})
+    engine = SyncEngine(config)
+    engine.run(card)
+
+    assert not (out / ".dsync").exists()
+    assert (out / "photo.jpg").exists()

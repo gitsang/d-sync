@@ -43,8 +43,15 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_NAMES = ("dsync.yml", "dsync.yaml")
-"""Candidate config file names looked up in the SD card root (dsync.yml first)."""
+LEGACY_CONFIG_NAME = ".dsync"
+"""Legacy card-local config: plain ``key=value`` text, kept for cards written by the
+original shell implementation. It remains fully supported."""
+
+DEFAULT_CONFIG_NAMES = ("dsync.yml", "dsync.yaml", LEGACY_CONFIG_NAME)
+"""Candidate config file names looked up in the SD card root, in precedence order.
+
+The YAML forms come first because they express strictly more (per-rule excludes and
+overwrite, explicit destinations). A card carrying both is treated as YAML."""
 
 
 class ConfigError(Exception):
@@ -338,14 +345,114 @@ def parse_config(data: Any, source_path: Path | None = None, card_root: Path | N
     return config
 
 
+# ----------------------------------------------------------------------
+# Legacy ".dsync" key=value format
+# ----------------------------------------------------------------------
+_LEGACY_BOOL_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def parse_legacy_config(text: str, source_path: Path | None = None,
+                        card_root: Path | None = None) -> SyncConfig:
+    """Parse the legacy ``.dsync`` card config (plain ``key=value`` lines).
+
+    This is the format the original shell implementation used, so cards written for it
+    keep working. The grammar is deliberately tiny:
+
+    .. code-block:: text
+
+        enabled=true
+        name=camera-card-1
+        destination_root=/mnt/backup
+        sync=DCIM /mnt/backup/photos
+        sync=PRIVATE/M4ROOT/CLIP /mnt/backup/video clips
+        exclude=.Trashes .Spotlight-V100
+        overwrite=true
+
+    Every ``sync`` line is ``<source-subpath> <destination>``, split on the first run
+    of whitespace so the destination may contain spaces. ``name`` is accepted for
+    compatibility and ignored: it only ever labelled the logs.
+    """
+    rules: list[SyncRule] = []
+    excludes: list[str] = []
+    enabled = True
+    overwrite = False
+    destination_root = ""
+
+    def trim(value: str) -> str:
+        return value.strip()
+
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.split("#", 1)[0]
+        if not line.strip():
+            continue
+        if "=" not in line:
+            logger.warning("Line %d of %s is not key=value, ignoring: %r",
+                           lineno, LEGACY_CONFIG_NAME, line.strip())
+            continue
+        key, _, value = line.partition("=")
+        key = trim(key).lower()
+        value = trim(value)
+
+        if key == "sync":
+            parts = value.split(None, 1)
+            if len(parts) != 2:
+                logger.warning("Line %d of %s is a malformed sync entry (needs a source "
+                               "and a target), ignoring: %r", lineno, LEGACY_CONFIG_NAME, value)
+                continue
+            rules.append(SyncRule(source=trim(parts[0]), destination=trim(parts[1])))
+        elif key == "enabled":
+            enabled = value.lower() not in _LEGACY_BOOL_FALSE
+        elif key == "overwrite":
+            overwrite = value.lower() not in _LEGACY_BOOL_FALSE
+        elif key == "destination_root":
+            destination_root = value
+        elif key == "exclude":
+            excludes.extend(token for token in value.split() if token)
+        elif key == "name":
+            # Labels the card in logs only; the dashboard derives its own name.
+            continue
+        elif key in ("flags", "mount", "umount"):
+            # The shell version passed these straight to rsync / used them to control
+            # mounting. Neither concept exists here: the sync engine is pure Python and
+            # the OS mounts the card. Accept and ignore so the card still loads.
+            logger.info("Ignoring legacy %r setting in %s (handled by the sync engine)",
+                        key, LEGACY_CONFIG_NAME)
+        else:
+            logger.warning("Line %d of %s has an unknown key, ignoring: %r",
+                           lineno, LEGACY_CONFIG_NAME, key)
+
+    # No "sync" lines is NOT an error: the shell implementation treated it as "this card
+    # is configured but wants nothing copied", logged it and exited successfully. Raising
+    # here would turn a harmless card into a red error on the dashboard.
+
+    return SyncConfig(
+        rules=rules,
+        destination_root=destination_root,
+        overwrite=overwrite,
+        exclude=tuple(excludes),
+        enabled=enabled,
+        source_path=source_path,
+        card_root=card_root,
+    )
+
+
 def load_config_file(path: Path, card_root: Path | None = None) -> SyncConfig:
-    """Read and parse a config file from disk."""
+    """Read and parse a config file from disk.
+
+    Two formats are accepted, chosen by file name:
+
+    * ``dsync.yml`` / ``dsync.yaml`` -- YAML (see :func:`parse_config`)
+    * ``.dsync`` -- legacy ``key=value`` text (see :func:`parse_legacy_config`)
+    """
     try:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ConfigError(f"Cannot read config file {path}: {exc}") from exc
+
+    if path.name == LEGACY_CONFIG_NAME:
+        return parse_legacy_config(text, source_path=path, card_root=card_root)
 
     try:
         import yaml

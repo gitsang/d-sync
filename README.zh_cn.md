@@ -91,6 +91,15 @@ python -m dsync --sync /media/user/CARD     # Linux / macOS
 python -m dsync --sync E:\                  # Windows
 ```
 
+不确定哪个挂载点才是这张卡，或者它到底会不会被识别？
+
+```bash
+python -m dsync --identify
+```
+
+它会列出守护进程会考虑的每个设备，带标签、根目录里找到的配置文件名（没有则是 `-`），
+以及是否被判为外置/可移动。读卡器把卡报告成固定盘时，加上 `--include-fixed`。
+
 ---
 
 ## 看板页面结构
@@ -249,6 +258,7 @@ python -m dsync [选项]
 | `--port` | `8765` | 看板监听端口，被占用时自动向后寻找 |
 | `--config-name` | `dsync.yml`、`dsync.yaml`、`.dsync` | 设备上的配置文件名，可重复指定 |
 | `--sync 路径` | — | 同步指定路径一次后退出（不常驻） |
+| `--identify` | — | 列出可移动设备及其挂载点、标签、配置文件后退出 |
 | `--once` | 关 | 启动看板后约 1 秒退出 |
 | `--include-fixed` | 关 | 把固定磁盘也纳入候选（应对读卡器被识别为固定盘的情况） |
 | `--poll-interval` | `3.0` | 轮询间隔（秒） |

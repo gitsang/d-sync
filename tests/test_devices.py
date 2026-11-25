@@ -156,3 +156,33 @@ def test_monitor_reports_insert_and_remove(monkeypatch, tmp_path):
     state["drives"] = []
     monitor._scan()
     assert removed == [card]
+
+
+def test_identify_handles_unreadable_mountpoint(monkeypatch, capsys, tmp_path):
+    """`--identify` must not abort when a mount point cannot be listed.
+
+    /boot/efi is the usual offender: it is mounted but only readable by root, so
+    probing for a config file there raises PermissionError.
+    """
+    from dsync import cli
+
+    readable = tmp_path / "card"
+    readable.mkdir()
+    (readable / ".dsync").write_text("sync=DCIM /tmp/out\n")
+
+    def fake_is_file(self):
+        if self.name == "dsync.yml":
+            raise PermissionError(13, "Permission denied", str(self))
+        return super(type(self), self).is_file()
+
+    monkeypatch.setattr(devices, "list_removable_drives", lambda include_fixed=False: [readable])
+    monkeypatch.setattr(devices, "volume_label", lambda p: "CARD")
+    monkeypatch.setattr(devices, "is_external", lambda p: True)
+    monkeypatch.setattr(devices, "is_removable", lambda p: True)
+
+    # Unreadable probe: the listing must still print and exit successfully.
+    monkeypatch.setattr("pathlib.Path.is_file", fake_is_file, raising=False)
+    assert cli._identify(include_fixed=True) == 0
+    out = capsys.readouterr().out
+    assert "CARD" in out
+    assert "MOUNT POINT" in out

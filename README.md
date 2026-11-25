@@ -92,6 +92,16 @@ python -m dsync --sync /media/user/CARD     # Linux / macOS
 python -m dsync --sync E:\                  # Windows
 ```
 
+Not sure which mount point is the card, or whether it will be picked up at all?
+
+```bash
+python -m dsync --identify
+```
+
+That lists every device the daemon would consider, with its label, the config file
+found in its root (or `-`), and whether it counts as external/removable. If a card
+reader reports the card as a fixed disk, add `--include-fixed`.
+
 ---
 
 ## Dashboard layout
@@ -252,6 +262,7 @@ python -m dsync [options]
 | `--port` | `8765` | Dashboard port; moves to the next free port when taken |
 | `--config-name` | `dsync.yml`, `dsync.yaml`, `.dsync` | Config file name on the device; may be repeated |
 | `--sync PATH` | — | Sync that path once and exit (no daemon) |
+| `--identify` | — | List removable devices with their mount point, label and config file, then exit |
 | `--once` | off | Start the dashboard, then exit after a second |
 | `--include-fixed` | off | Also consider fixed disks (for card readers the OS reports as fixed) |
 | `--poll-interval` | `3.0` | Polling interval in seconds |

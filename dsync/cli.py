@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Also scan removable devices that the OS reports as fixed disks (some card readers need this)")
     parser.add_argument("--once", action="store_true", help="Scan the devices once and exit")
     parser.add_argument("--sync", metavar="DRIVE", help="Sync the given drive immediately and exit, e.g. E:\\")
+    parser.add_argument("--identify", action="store_true",
+                        help="List the removable devices and their mount points / labels, then exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     return parser
 
@@ -59,6 +61,10 @@ def main(argv: list[str] | None = None) -> int:
         poll_interval=args.poll_interval,
         include_fixed=args.include_fixed,
     )
+
+    # ------------------------------------------------------------ identify mode
+    if args.identify:
+        return _identify(include_fixed=args.include_fixed)
 
     # ------------------------------------------------------------ one-shot sync mode
     if args.sync:
@@ -136,6 +142,48 @@ def main(argv: list[str] | None = None) -> int:
         if tray:
             tray.stop()
         app.stop()
+    return 0
+
+
+def _identify(include_fixed: bool = False) -> int:
+    """Print the devices the daemon would consider, so a card can be found by eye.
+
+    Answers the question the dashboard cannot: which mount point is this card, and
+    which config file name will it be looked up under.
+    """
+    from .devices import (
+        is_external,
+        is_removable,
+        list_removable_drives,
+        volume_label,
+    )
+
+    drives = list_removable_drives(include_fixed=include_fixed)
+    if not drives:
+        print("No removable devices found.")
+        if not include_fixed:
+            print("If your card reader reports the card as a fixed disk, retry with --include-fixed.")
+        return 0
+
+    print(f"{'MOUNT POINT':<40} {'LABEL':<20} {'CONFIG':<12} EXT REMOVABLE")
+    for path in sorted(drives, key=lambda p: str(p)):
+        config = "-"
+        for name in DEFAULT_CONFIG_NAMES:
+            try:
+                if (path / name).is_file():
+                    config = name
+                    break
+            except OSError:
+                # An unreadable mount point (often /boot/efi) must not abort the listing.
+                config = "?"
+                break
+        print(
+            f"{str(path):<40} {volume_label(path):<20} {config:<12} "
+            f"{'yes' if is_external(path) else 'no':<3} "
+            f"{'yes' if is_removable(path) else 'no'}"
+        )
+    print()
+    print("A device is synced only when CONFIG names a file that exists in its root.")
     return 0
 
 
